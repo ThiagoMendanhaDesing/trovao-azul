@@ -26,8 +26,10 @@ export default function LoginPage() {
           password,
         });
 
+      // MOSTRA O ERRO REAL DO SUPABASE
       if (authError) {
-        setError("E-mail ou senha incorretos.");
+        console.error("ERRO SUPABASE LOGIN:", authError);
+        setError(authError.message);
         setLoading(false);
         return;
       }
@@ -51,8 +53,8 @@ export default function LoginPage() {
         .maybeSingle();
 
       if (adminError) {
-        console.error("Erro ao verificar administrador:", adminError);
-        setError("Não foi possível verificar seu acesso.");
+        console.error("ERRO AO VERIFICAR ADMIN:", adminError);
+        setError(adminError.message);
         setLoading(false);
         return;
       }
@@ -74,8 +76,8 @@ export default function LoginPage() {
         .maybeSingle();
 
       if (streamerError) {
-        console.error("Erro ao buscar streamer:", streamerError);
-        setError("Ocorreu um erro ao buscar seu perfil.");
+        console.error("ERRO AO BUSCAR STREAMER:", streamerError);
+        setError(streamerError.message);
         setLoading(false);
         return;
       }
@@ -93,9 +95,8 @@ export default function LoginPage() {
 
       await supabase.auth.signOut();
       setLoading(false);
-
     } catch (err) {
-      console.error("Erro inesperado no login:", err);
+      console.error("ERRO INESPERADO NO LOGIN:", err);
       setError("Ocorreu um erro inesperado. Tente novamente.");
       setLoading(false);
     }
@@ -116,7 +117,6 @@ export default function LoginPage() {
 
           {/* TÍTULO */}
           <div className="mb-8 text-center">
-
             <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-blue-400">
               Trovão Azul
             </p>
@@ -128,7 +128,6 @@ export default function LoginPage() {
             <p className="mt-3 text-sm leading-6 text-slate-400">
               Entre na sua conta para acessar seu painel.
             </p>
-
           </div>
 
           {/* FORMULÁRIO */}
@@ -136,7 +135,6 @@ export default function LoginPage() {
 
             {/* E-MAIL */}
             <div>
-
               <label
                 htmlFor="email"
                 className="mb-2 block text-sm font-medium text-slate-200"
@@ -154,12 +152,10 @@ export default function LoginPage() {
                 disabled={loading}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
               />
-
             </div>
 
             {/* SENHA */}
             <div>
-
               <div className="mb-2 flex items-center justify-between">
 
                 <label
@@ -176,7 +172,6 @@ export default function LoginPage() {
                 >
                   Esqueci minha senha
                 </button>
-
               </div>
 
               <input
@@ -189,7 +184,6 @@ export default function LoginPage() {
                 disabled={loading}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
               />
-
             </div>
 
             {/* ERRO */}
@@ -205,14 +199,14 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full rounded-xl bg-blue-600 px-4 py-3.5 font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Verificando acesso..." : "Entrar na minha conta"}
+              {loading
+                ? "Verificando acesso..."
+                : "Entrar na minha conta"}
             </button>
-
           </form>
 
           {/* CADASTRO */}
           <div className="mt-7 text-center">
-
             <p className="text-sm text-slate-400">
               Ainda não possui uma conta?
             </p>
@@ -224,9 +218,7 @@ export default function LoginPage() {
             >
               Criar minha conta →
             </button>
-
           </div>
-
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-600">
