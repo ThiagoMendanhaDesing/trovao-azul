@@ -19,7 +19,7 @@ export default function ForgotPasswordPage() {
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-  redirectTo: "https://trovao-azul-om6nl4ite-trovao-azul.vercel.app/reset-password",
+  redirectTo: "https://trovao-azul.vercel.app/reset-password",
 });
 
       if (error) {
