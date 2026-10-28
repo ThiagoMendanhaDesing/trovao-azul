@@ -1468,81 +1468,28 @@ export default function AdminPage() {
    * ============================================================
    * STREAMERS VISÍVEIS
    * ============================================================
-   *
-   * O relatório do TikTok já traz o username_tiktok de cada
-   * criador. Por isso, o Admin não deve depender da tabela
-   * "streamers" para exibir os dados.
+   * Esta lista representa somente contas cadastradas na tabela
+   * "streamers". Os registros em "resultados_streamers" são
+   * resultados/creators importados e nunca criam novas contas.
+   * Cada conta recebe os resultados que estão vinculados ao seu
+   * streamer_id. Nenhum dado é alterado no Supabase aqui.
    */
-  /*
-   * ============================================================
-   * STREAMERS VISÍVEIS
-   * ============================================================
-   *
-   * IMPORTANTE:
-   * A tabela principal do Admin representa STREAMERS, não
-   * criadores individuais. O username_tiktok vem do relatório
-   * salvo em resultados_streamers. Por isso, várias linhas de
-   * criadores do mesmo @ são consolidadas em uma única linha.
-   */
-  const streamersVisiveis =
-    useMemo<StreamerVisivel[]>(() => {
-      const mapa = new Map<string, StreamerVisivel>();
+  const streamersVisiveis = useMemo<StreamerVisivel[]>(() => {
+    return streamers
+      .map((streamer) => {
+        const dados = resultados.filter(
+          (resultado) => resultado.streamer_id === streamer.id
+        );
 
-      for (const resultado of resultados) {
-        const username = obterUsernameTikTokResultado(resultado);
-        const chave = normalizarUsername(username);
+        const resultadoPrincipal =
+          dados.reduce<Resultado | null>((principal, atual) => {
+            if (!principal) return atual;
 
-        if (!chave) {
-          continue;
-        }
-
-        const cadastrado = obterStreamerPorUsername(username);
-        const existente = mapa.get(chave);
-
-        if (!existente) {
-          mapa.set(chave, {
-            id: cadastrado?.id || `virtual:${chave}`,
-            username_tiktok: username,
-            email: cadastrado?.email || "",
-            created_at:
-              cadastrado?.created_at ||
-              resultado.data_importacao ||
-              new Date(0).toISOString(),
-            grupoRelatorio: resultado.grupo || null,
-            dados: [resultado],
-            resultadoPrincipal: resultado,
-          });
-        } else {
-          existente.dados.push(resultado);
-
-          // Mantém o primeiro grupo válido encontrado no relatório.
-          if (!existente.grupoRelatorio && resultado.grupo) {
-            existente.grupoRelatorio = resultado.grupo;
-          }
-
-          // Usa como detalhe principal o registro com mais diamantes.
-          if (
-            (Number(resultado.diamantes) || 0) >
-            (Number(existente.resultadoPrincipal.diamantes) || 0)
-          ) {
-            existente.resultadoPrincipal = resultado;
-          }
-        }
-      }
-
-      // Contas cadastradas sem relatório continuam aparecendo.
-      for (const streamer of streamers) {
-        const chave = normalizarUsername(streamer.username_tiktok);
-
-        if (!chave || mapa.has(chave)) {
-          continue;
-        }
-
-        mapa.set(chave, {
-          ...streamer,
-          grupoRelatorio: null,
-          dados: [],
-          resultadoPrincipal: {
+            return (Number(atual.diamantes) || 0) >
+              (Number(principal.diamantes) || 0)
+              ? atual
+              : principal;
+          }, null) || {
             streamer_id: streamer.id,
             criador_id: "",
             nome_criador: null,
@@ -1553,14 +1500,20 @@ export default function AdminPage() {
             transmissoes: 0,
             batalhas: 0,
             dados_completos: {},
-          },
-        });
-      }
+          };
 
-      return Array.from(mapa.values()).sort((a, b) =>
+        return {
+          ...streamer,
+          // O nome de grupo exibido vem do agrupamento administrativo.
+          grupoRelatorio: null,
+          dados,
+          resultadoPrincipal,
+        };
+      })
+      .sort((a, b) =>
         a.username_tiktok.localeCompare(b.username_tiktok)
       );
-    }, [resultados, streamers]);
+  }, [streamers, resultados]);
 
   const streamersFiltrados = useMemo(() => {
     const termo = busca.trim().toLowerCase().replace(/^@/, "");
@@ -1570,12 +1523,13 @@ export default function AdminPage() {
     }
 
     return streamersVisiveis.filter((streamer) => {
+      const grupo = obterGrupoDoStreamer(streamer.id)?.nome || "";
       return (
         normalizarUsername(streamer.username_tiktok).includes(termo) ||
-        streamer.grupoRelatorio?.toLowerCase().includes(termo)
+        grupo.toLowerCase().includes(termo)
       );
     });
-  }, [streamersVisiveis, busca]);
+  }, [streamersVisiveis, busca, grupos]);
 
   const quantidadeStreamersFiltrados = streamersFiltrados.length;
 
@@ -1588,30 +1542,10 @@ export default function AdminPage() {
   const rankingStreamers = useMemo(() => {
     return streamersVisiveis
       .map((streamer) => {
-        const cadastrado = obterStreamerPorUsername(
-          streamer.username_tiktok
-        );
-
-        const grupo = cadastrado
-          ? obterGrupoDoStreamer(cadastrado.id)
-          : undefined;
-
-        let dados = streamer.dados;
-
-        // Se a conta está em um agrupamento cadastrado,
-        // consolida também os relatórios das contas do grupo.
-        if (grupo) {
-          const usernamesDoGrupo = grupo.memberIds
-            .map((id) => obterStreamer(id)?.username_tiktok)
-            .filter(Boolean)
-            .map((username) => normalizarUsername(username));
-
-          dados = resultados.filter((resultado) =>
-            usernamesDoGrupo.includes(
-              normalizarUsername(obterUsernameTikTokResultado(resultado))
-            )
-          );
-        }
+        const grupo = obterGrupoDoStreamer(streamer.id);
+        const dados = grupo
+          ? resultadosDoGrupo(streamer.id)
+          : streamer.dados;
 
         return {
           streamer,
@@ -1633,7 +1567,7 @@ export default function AdminPage() {
         };
       })
       .sort((a, b) => b.diamantes - a.diamantes);
-  }, [streamersVisiveis, resultados, grupos]);
+  }, [streamersVisiveis, resultados, grupos, streamers]);
 
   /*
    * ============================================================
@@ -2549,7 +2483,7 @@ export default function AdminPage() {
             <div className="mt-6 space-y-4">
 
               <SummaryRow
-                label="Streamers ativos"
+                label="Streamers"
                 value={
                   streamersVisiveis.length
                 }
@@ -2562,14 +2496,6 @@ export default function AdminPage() {
                   grupos.length
                 }
                 icon="🔗"
-              />
-
-              <SummaryRow
-                label="Criadores"
-                value={
-                  resultados.length
-                }
-                icon="👤"
               />
 
               <SummaryRow
@@ -3080,7 +3006,7 @@ export default function AdminPage() {
                 </div>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  Cada linha representa um streamer único encontrado pelo @username_tiktok do relatório do TikTok.
+                  Cada linha representa uma conta cadastrada na plataforma.
                 </p>
 
               </div>
@@ -3210,9 +3136,7 @@ export default function AdminPage() {
                         ? undefined
                         : obterGrupoDoStreamer(streamer.id);
 
-                    const nomeGrupo =
-                      grupoCadastrado?.nome ||
-                      streamer.grupoRelatorio;
+                    const nomeGrupo = grupoCadastrado?.nome || null;
 
                     return (
                       <tr
@@ -3230,7 +3154,7 @@ export default function AdminPage() {
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
                                 {dados.length > 0
-                                  ? `${formatarNumero(dados.length)} criador(es) no relatório`
+                                  ? `${formatarNumero(dados.length)} registro(s) importado(s)`
                                   : "Sem relatório importado"}
                               </p>
                             </div>
