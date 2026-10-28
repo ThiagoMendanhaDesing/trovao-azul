@@ -123,6 +123,11 @@ export default function AdminPage() {
     useState<string[]>([]);
 
   const [buscaAgrupamento, setBuscaAgrupamento] = useState("");
+  const [paginaListaAgrupamento, setPaginaListaAgrupamento] = useState(1);
+  const [buscaContaPrincipal, setBuscaContaPrincipal] = useState("");
+  const [principalDropdownAberto, setPrincipalDropdownAberto] = useState(false);
+  const [paginaContaPrincipal, setPaginaContaPrincipal] = useState(1);
+  const [agrupamentoExpandido, setAgrupamentoExpandido] = useState(true);
 
   const [senhaAgrupamento, setSenhaAgrupamento] =
     useState("");
@@ -2211,6 +2216,10 @@ export default function AdminPage() {
     setPrincipalSelecionado("");
     setMembrosSelecionados([]);
     setBuscaAgrupamento("");
+    setPaginaListaAgrupamento(1);
+    setBuscaContaPrincipal("");
+    setPrincipalDropdownAberto(false);
+    setPaginaContaPrincipal(1);
     setSenhaAgrupamento("");
     setErro("");
     setMostrarAgrupamento(true);
@@ -2222,6 +2231,10 @@ export default function AdminPage() {
     setPrincipalSelecionado(grupo.streamer_principal_id);
     setMembrosSelecionados(grupo.memberIds);
     setBuscaAgrupamento("");
+    setPaginaListaAgrupamento(1);
+    setBuscaContaPrincipal("");
+    setPrincipalDropdownAberto(false);
+    setPaginaContaPrincipal(1);
     setSenhaAgrupamento("");
     setErro("");
     setMostrarAgrupamento(true);
@@ -2404,6 +2417,41 @@ export default function AdminPage() {
       </main>
     );
   }
+
+  // O carregamento do Supabase já percorre todos os lotes de 1.000 linhas.
+  // Esta paginação de interface organiza a escolha de criadores em grupos de 20.
+  const termoPrincipal = normalizarTexto(buscaContaPrincipal).replace(/^@+/, "");
+  const criadoresPrincipaisFiltrados = criadoresVisiveis.filter((criador) => {
+    if (!termoPrincipal) return true;
+    return [
+      obterNomeExibicaoCriador(criador),
+      obterUsernameDoRegistroCriador(criador),
+      criador.criador_id,
+      criador.grupo,
+      criador.agente,
+    ].some((valor) => normalizarTexto(valor).replace(/^@+/, "").includes(termoPrincipal));
+  });
+  const totalPaginasPrincipal = Math.max(1, Math.ceil(criadoresPrincipaisFiltrados.length / ITENS_POR_PAGINA));
+  const criadoresPrincipaisPaginados = criadoresPrincipaisFiltrados.slice(
+    (paginaContaPrincipal - 1) * ITENS_POR_PAGINA,
+    paginaContaPrincipal * ITENS_POR_PAGINA
+  );
+  const termoMembrosAgrupamento = normalizarTexto(buscaAgrupamento).replace(/^@+/, "");
+  const criadoresMembrosFiltrados = criadoresVisiveis.filter((criador) => {
+    if (!termoMembrosAgrupamento) return true;
+    return [
+      obterNomeExibicaoCriador(criador),
+      obterUsernameDoRegistroCriador(criador),
+      criador.criador_id,
+      criador.grupo,
+      criador.agente,
+    ].some((valor) => normalizarTexto(valor).replace(/^@+/, "").includes(termoMembrosAgrupamento));
+  });
+  const totalPaginasMembrosAgrupamento = Math.max(1, Math.ceil(criadoresMembrosFiltrados.length / ITENS_POR_PAGINA));
+  const criadoresMembrosPaginados = criadoresMembrosFiltrados.slice(
+    (paginaListaAgrupamento - 1) * ITENS_POR_PAGINA,
+    paginaListaAgrupamento * ITENS_POR_PAGINA
+  );
 
   /*
    * ============================================================
@@ -2893,17 +2941,27 @@ export default function AdminPage() {
 
             </div>
 
-            <button
-              onClick={
-                abrirNovoGrupo
-              }
-              className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold transition hover:bg-purple-500"
-            >
-              + Agrupar criadores
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAgrupamentoExpandido((aberto) => !aberto)}
+                aria-expanded={agrupamentoExpandido}
+                className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-800"
+              >
+                {agrupamentoExpandido ? "Recolher gaveta ⌃" : "Abrir gaveta ⌄"}
+              </button>
+
+              <button
+                onClick={abrirNovoGrupo}
+                className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold transition hover:bg-purple-500"
+              >
+                + Agrupar criadores
+              </button>
+            </div>
 
           </div>
 
+          {agrupamentoExpandido && (
           <div className="p-6">
 
             {grupos.length ===
@@ -3135,6 +3193,7 @@ export default function AdminPage() {
             )}
 
           </div>
+          )}
 
         </div>
 
@@ -3490,38 +3549,146 @@ export default function AdminPage() {
                   Criador principal
                 </label>
 
-                <select
-                  value={
-                    principalSelecionado
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setPrincipalSelecionado(
-                      event.target
-                        .value
-                    )
-                  }
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white outline-none focus:border-purple-500"
-                >
+                <div className="relative">
+                  <input
+                    value={buscaContaPrincipal}
+                    onChange={(event) => {
+                      setBuscaContaPrincipal(event.target.value);
+                      setPaginaContaPrincipal(1);
+                      setPrincipalDropdownAberto(true);
+                    }}
+                    onFocus={() => setPrincipalDropdownAberto(true)}
+                    placeholder="Pesquisar conta principal por nome, @usuário ou ID..."
+                    aria-label="Pesquisar criador principal"
+                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-purple-500"
+                  />
 
-                  <option value="">
-                    Selecione o criador principal
-                  </option>
+                  {buscaContaPrincipal && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBuscaContaPrincipal("");
+                        setPaginaContaPrincipal(1);
+                        setPrincipalDropdownAberto(true);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-white"
+                      aria-label="Limpar pesquisa do criador principal"
+                    >
+                      Limpar
+                    </button>
+                  )}
 
-                  {criadoresVisiveis.map((criador) => {
-                    const username = obterUsernameDoRegistroCriador(criador);
-                    return (
-                      <option key={chaveCriador(criador)} value={chaveCriador(criador)}>
-                        {username ? `@${username}` : obterNomeExibicaoCriador(criador)} — ID {criador.criador_id}
-                      </option>
-                    );
-                  })}
+                  {principalDropdownAberto && (
+                    <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-2xl border border-purple-500/30 bg-[#0b1224] shadow-2xl">
+                      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                        <p className="text-xs text-slate-400">
+                          {formatarNumero(criadoresPrincipaisFiltrados.length)} criador(es) encontrados · 20 por página
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setPrincipalDropdownAberto(false)}
+                          className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+                        >
+                          Fechar
+                        </button>
+                      </div>
 
-                </select>
+                      <div className="max-h-72 overflow-y-auto p-2">
+                        {criadoresPrincipaisPaginados.length === 0 ? (
+                          <p className="p-5 text-center text-sm text-slate-500">Nenhum criador encontrado. Tente outro nome ou ID.</p>
+                        ) : (
+                          criadoresPrincipaisPaginados.map((criador) => {
+                            const key = chaveCriador(criador);
+                            const username = obterUsernameDoRegistroCriador(criador);
+                            const selecionado = principalSelecionado === key;
+                            return (
+                              <button
+                                type="button"
+                                key={key}
+                                onClick={() => {
+                                  setPrincipalSelecionado(key);
+                                  setBuscaContaPrincipal("");
+                                  setPrincipalDropdownAberto(false);
+                                  setPaginaContaPrincipal(1);
+                                  setMembrosSelecionados((atuais) => Array.from(new Set([...atuais, key])));
+                                }}
+                                className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition ${selecionado ? "border-purple-500/50 bg-purple-500/10" : "border-transparent hover:border-slate-700 hover:bg-slate-900"}`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-sm font-semibold text-white">
+                                    {username ? `@${username}` : obterNomeExibicaoCriador(criador)}
+                                  </span>
+                                  <span className="mt-1 block truncate text-xs text-slate-500">
+                                    ID: {criador.criador_id} · 💎 {formatarNumero(criador.diamantes)}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 text-xs font-bold text-purple-300">
+                                  {selecionado ? "✓ Selecionado" : "Escolher"}
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {criadoresPrincipaisFiltrados.length > ITENS_POR_PAGINA && (
+                        <div className="flex items-center justify-between border-t border-slate-800 px-3 py-3">
+                          <button
+                            type="button"
+                            disabled={paginaContaPrincipal <= 1}
+                            onClick={() => setPaginaContaPrincipal((pagina) => Math.max(1, pagina - 1))}
+                            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                          >
+                            ← Anterior
+                          </button>
+                          <span className="text-xs text-slate-400">Página {paginaContaPrincipal} de {totalPaginasPrincipal}</span>
+                          <button
+                            type="button"
+                            disabled={paginaContaPrincipal >= totalPaginasPrincipal}
+                            onClick={() => setPaginaContaPrincipal((pagina) => Math.min(totalPaginasPrincipal, pagina + 1))}
+                            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                          >
+                            Próxima →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 rounded-xl border border-purple-500/20 bg-purple-500/5 px-4 py-3">
+                  <p className="text-xs text-purple-300">Conta principal selecionada</p>
+                  {principalSelecionado && obterCriadorPorChave(principalSelecionado) ? (
+                    <div className="mt-1 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-white">
+                          {(() => {
+                            const principal = obterCriadorPorChave(principalSelecionado)!;
+                            const username = obterUsernameDoRegistroCriador(principal);
+                            return username ? `@${username}` : obterNomeExibicaoCriador(principal);
+                          })()}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">ID: {obterCriadorPorChave(principalSelecionado)!.criador_id}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrincipalSelecionado("");
+                          setMembrosSelecionados((atuais) => atuais.filter((key) => key !== principalSelecionado));
+                          setPrincipalDropdownAberto(true);
+                        }}
+                        className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                      >
+                        Trocar
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-500">Nenhum criador principal selecionado. Pesquise e escolha um acima.</p>
+                  )}
+                </div>
 
                 <p className="mt-2 text-xs text-slate-500">
-                  Esse criador será usado como referência principal do grupo.
+                  Pesquise pelo nome, usuário TikTok ou ID. A lista tem páginas de 20 criadores e procura em todos os registros carregados.
                 </p>
 
               </div>
@@ -3547,20 +3714,21 @@ export default function AdminPage() {
 
                 <input
                   value={buscaAgrupamento}
-                  onChange={(event) => setBuscaAgrupamento(event.target.value)}
-                  placeholder="Pesquisar entre todos os criadores..."
+                  onChange={(event) => {
+                    setBuscaAgrupamento(event.target.value);
+                    setPaginaListaAgrupamento(1);
+                  }}
+                  placeholder="Pesquisar entre todos os criadores por nome, @usuário ou ID..."
                   className="mb-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-purple-500"
                 />
 
+                <p className="mb-3 text-xs text-slate-500">
+                  {formatarNumero(criadoresMembrosFiltrados.length)} criador(es) encontrados · mostrando 20 por página
+                </p>
+
                 <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
 
-                  {criadoresVisiveis
-                    .filter((criador) => {
-                      const termo = normalizarTexto(buscaAgrupamento);
-                      if (!termo) return true;
-                      return [obterNomeExibicaoCriador(criador), obterUsernameDoRegistroCriador(criador), criador.criador_id]
-                        .some((valor) => normalizarTexto(valor).includes(termo));
-                    })
+                  {criadoresMembrosPaginados
                     .map((criador) => {
                       const creatorKey = chaveCriador(criador);
                       const username = obterUsernameDoRegistroCriador(criador);
@@ -3649,6 +3817,28 @@ export default function AdminPage() {
                   )}
 
                 </div>
+
+                {criadoresMembrosFiltrados.length > ITENS_POR_PAGINA && (
+                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                    <button
+                      type="button"
+                      disabled={paginaListaAgrupamento <= 1}
+                      onClick={() => setPaginaListaAgrupamento((pagina) => Math.max(1, pagina - 1))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      ← Anterior
+                    </button>
+                    <span className="text-xs text-slate-400">Página {paginaListaAgrupamento} de {totalPaginasMembrosAgrupamento}</span>
+                    <button
+                      type="button"
+                      disabled={paginaListaAgrupamento >= totalPaginasMembrosAgrupamento}
+                      onClick={() => setPaginaListaAgrupamento((pagina) => Math.min(totalPaginasMembrosAgrupamento, pagina + 1))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      Próxima →
+                    </button>
+                  </div>
+                )}
 
               </div>
 
