@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import * as XLSX from "xlsx";
+import Logo from "@/components/Logo";
 
 type Streamer = {
   id: string;
@@ -2476,7 +2477,7 @@ export default function AdminPage() {
           <div className="flex items-center gap-3">
 
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/20">
-              ⚡
+              <Logo size={20} />
             </div>
 
             <div>

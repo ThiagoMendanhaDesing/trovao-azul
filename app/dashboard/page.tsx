@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Logo from "@/components/Logo";
 
 type Streamer = {
   id: string;
@@ -237,7 +238,7 @@ export default function DashboardPage() {
           {/* LOGO */}
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/25">
-              <span className="text-xl">⚡</span>
+              <Logo size={20} />
             </div>
 
             <div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Logo from "@/components/Logo";
 
 export default function Home() {
   const [intro, setIntro] = useState(true);
@@ -31,7 +32,7 @@ export default function Home() {
           <Link href="/" className="group flex items-center gap-3">
 
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/30 transition duration-300 group-hover:scale-110 group-hover:rotate-3">
-              <span className="text-2xl">⚡</span>
+              <Logo size={24} />
             </div>
 
             <div>

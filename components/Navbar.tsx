@@ -1,8 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Menu, X, Zap } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useState } from "react";
+import Logo from "@/components/Logo";
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -19,7 +20,7 @@ export default function Navbar() {
         {/* LOGO */}
         <a href="#" className="group flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/30 transition duration-300 group-hover:scale-110 group-hover:rotate-3">
-            <Zap className="h-6 w-6 fill-white text-white" />
+            <Logo size={24} />
           </div>
 
           <div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Logo from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -111,7 +112,7 @@ export default function LoginPage() {
           {/* ÍCONE */}
           <div className="mb-5 flex justify-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/20">
-              <span className="text-3xl">⚡</span>
+              <Logo size={32} />
             </div>
           </div>
 

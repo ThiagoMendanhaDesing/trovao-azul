@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Logo from "@/components/Logo";
 
 export default function CadastroPage() {
   const router = useRouter();
@@ -89,7 +90,7 @@ export default function CadastroPage() {
 
           {/* ÍCONE */}
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/30">
-            <span className="text-3xl">⚡</span>
+            <Logo size={32} />
           </div>
 
           {/* TÍTULO */}
