@@ -582,17 +582,18 @@ export default function AdminPage() {
       return idOriginal;
     }
 
-    const nome = obterNomeCriador(row);
-
-    // Usamos um identificador numérico negativo sintético para continuar
-    // compatível tanto com uma coluna TEXT quanto com uma BIGINT no Supabase.
-    // IDs reais do TikTok são positivos, então não há colisão com IDs reais.
-    const identidade = nome
-      ? `nome:${normalizarUsername(nome)}`
-      : Object.keys(row)
-          .sort((a, b) => a.localeCompare(b))
-          .map((chave) => `${chave}:${String(row[chave] ?? "").trim()}`)
-          .join("|");
+    // Muitas linhas podem trazer a mesma mensagem no lugar do ID; além disso,
+    // o campo de nome pode repetir valores. Não usamos apenas o nome como chave.
+    // A linha inteira gera uma identidade estável, evitando que os registros sem
+    // ID real se sobrescrevam no upsert. Reimportar o mesmo arquivo gera as mesmas
+    // chaves. Os IDs numéricos reais acima continuam preservados.
+    const identidade = Object.keys(row)
+      .sort((a, b) => a.localeCompare(b))
+      .map((chave) => {
+        const valor = String(row[chave] ?? "").trim();
+        return `${normalizarTexto(chave)}:${valor}`;
+      })
+      .join("|");
 
     let hash = 2166136261;
     for (let i = 0; i < identidade.length; i++) {
