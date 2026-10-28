@@ -1,4 +1,4 @@
-  "use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -83,9 +83,6 @@ export default function AdminPage() {
   const [erro, setErro] = useState("");
 
   const [busca, setBusca] = useState("");
-  const [streamerSelecionado, setStreamerSelecionado] =
-    useState<string>("");
-
   const [resultadoSelecionado, setResultadoSelecionado] =
     useState<Resultado | null>(null);
 
@@ -237,14 +234,6 @@ export default function AdminPage() {
 
     setStreamers(lista);
 
-    if (
-      lista.length === 1 &&
-      !streamerSelecionado
-    ) {
-      setStreamerSelecionado(
-        lista[0].id
-      );
-    }
   }
 
   /*
@@ -682,56 +671,75 @@ export default function AdminPage() {
     );
   }
 
-  function obterUsernameTikTokDoResultado(
-    resultado: Resultado
-  ) {
-    const valor =
-      resultado.dados_completos
-        ? encontrarColuna(
-            resultado.dados_completos,
-            [
-              "username_tiktok",
-              "username tiktok",
-              "tiktok_username",
-              "tiktok username",
-              "usuario_tiktok",
-              "usuário tiktok",
-              "username",
-              "tiktok",
-            ]
-          )
-        : null;
-
-    const username =
-      valor?.toString().trim().replace(/^@/, "") ||
-      "";
-
-    return username;
+  function normalizarUsername(
+    valor: any
+  ): string {
+    return String(valor ?? "")
+      .trim()
+      .replace(/^@+/, "")
+      .toLowerCase();
   }
 
-  function obterStreamerDoResultado(
+  function obterUsernameTikTokResultado(
+    resultado: Resultado
+  ): string {
+    const valor = encontrarColuna(
+      resultado.dados_completos || {},
+      [
+        "username_tiktok",
+        "username tiktok",
+        "tiktok_username",
+        "tiktok username",
+      ]
+    );
+
+    if (valor !== null && valor !== undefined && String(valor).trim()) {
+      return String(valor).trim().replace(/^@+/, "");
+    }
+
+    const streamer = obterStreamer(
+      resultado.streamer_id
+    );
+
+    return streamer?.username_tiktok || "";
+  }
+
+  function obterStreamerPorUsername(
+    username: string
+  ) {
+    const normalizado =
+      normalizarUsername(username);
+
+    return streamers.find(
+      (streamer) =>
+        normalizarUsername(
+          streamer.username_tiktok
+        ) === normalizado
+    );
+  }
+
+  function obterGrupoDoResultado(
     resultado: Resultado
   ) {
     const username =
-      obterUsernameTikTokDoResultado(resultado);
+      obterUsernameTikTokResultado(
+        resultado
+      );
 
-    if (username) {
-      const streamerPorUsername =
-        streamers.find(
-          (streamer) =>
-            streamer.username_tiktok
-              ?.trim()
-              .replace(/^@/, "")
-              .toLowerCase() ===
-            username.toLowerCase()
-        );
+    const streamer =
+      username
+        ? obterStreamerPorUsername(
+            username
+          )
+        : undefined;
 
-      if (streamerPorUsername) {
-        return streamerPorUsername;
-      }
+    if (streamer) {
+      return obterGrupoDoStreamer(
+        streamer.id
+      );
     }
 
-    return obterStreamer(resultado.streamer_id);
+    return undefined;
   }
 
   function nomeStreamer(
@@ -745,35 +753,6 @@ export default function AdminPage() {
     return streamer
       ? `@${streamer.username_tiktok}`
       : "Streamer";
-  }
-
-  function nomeStreamerResultado(
-    resultado: Resultado
-  ) {
-    const streamer =
-      obterStreamerDoResultado(resultado);
-
-    if (streamer) {
-      return `@${streamer.username_tiktok}`;
-    }
-
-    const username =
-      obterUsernameTikTokDoResultado(resultado);
-
-    return username
-      ? `@${username}`
-      : "Streamer";
-  }
-
-  function grupoDoResultado(
-    resultado: Resultado
-  ) {
-    const streamer =
-      obterStreamerDoResultado(resultado);
-
-    return streamer
-      ? obterGrupoDoStreamer(streamer.id)
-      : obterGrupoDoStreamer(resultado.streamer_id);
   }
 
   /*
@@ -815,6 +794,24 @@ export default function AdminPage() {
     );
   }
 
+  function obterUsernameTikTokLinha(
+    row: Record<string, any>
+  ): string {
+    const valor = encontrarColuna(
+      row,
+      [
+        "username_tiktok",
+        "username tiktok",
+        "tiktok_username",
+        "tiktok username",
+      ]
+    );
+
+    return String(valor ?? "")
+      .trim()
+      .replace(/^@+/, "");
+  }
+
   /*
    * ============================================================
    * IMPORTAÇÃO
@@ -827,14 +824,6 @@ export default function AdminPage() {
     setArquivo(file);
     setMensagem("");
     setErro("");
-
-    if (!streamerSelecionado) {
-      setErro(
-        "Selecione primeiro o streamer ao qual este relatório pertence."
-      );
-
-      return;
-    }
 
     setImportando(true);
 
@@ -941,44 +930,32 @@ export default function AdminPage() {
           continue;
         }
 
-        const usernameArquivo =
-          encontrarColuna(
-            row,
-            [
-              "username_tiktok",
-              "username tiktok",
-              "tiktok_username",
-              "tiktok username",
-              "usuario_tiktok",
-              "usuário tiktok",
-              "username",
-              "tiktok",
-            ]
-          )?.toString()
-            .trim()
-            .replace(/^@/, "") ||
-          "";
+        const usernameTikTok =
+          obterUsernameTikTokLinha(
+            row
+          );
 
-        const streamerDoArquivo =
-          usernameArquivo
-            ? streamers.find(
-                (streamer) =>
-                  streamer.username_tiktok
-                    ?.trim()
-                    .replace(/^@/, "")
-                    .toLowerCase() ===
-                  usernameArquivo.toLowerCase()
+        const streamerDaLinha =
+          usernameTikTok
+            ? obterStreamerPorUsername(
+                usernameTikTok
               )
-            : null;
+            : undefined;
 
-        const streamerIdResultado =
-          streamerDoArquivo?.id ||
-          streamerSelecionado;
+        const streamerIdParaSalvar =
+          streamerDaLinha?.id ||
+          streamers[0]?.id;
+
+        if (!streamerIdParaSalvar) {
+          throw new Error(
+            "Não encontrei nenhuma conta base na tabela streamers. Cadastre pelo menos uma conta antes de importar o relatório."
+          );
+        }
 
         const resultado:
           ImportResultado = {
           streamer_id:
-            streamerIdResultado,
+            streamerIdParaSalvar,
 
           criador_id:
             criadorId,
@@ -1297,8 +1274,15 @@ export default function AdminPage() {
             .includes(
               termo
             ) ||
-          nomeStreamerResultado(
+          obterUsernameTikTokResultado(
             resultado
+          )
+            .toLowerCase()
+            .includes(
+              termo.replace(/^@/, "")
+            ) ||
+          nomeStreamer(
+            resultado.streamer_id
           )
             .toLowerCase()
             .includes(
@@ -1308,6 +1292,31 @@ export default function AdminPage() {
     }, [
       resultados,
       busca,
+      streamers,
+    ]);
+
+  const quantidadeStreamersFiltrados =
+    useMemo(() => {
+      const unicos = new Set<string>();
+
+      for (const resultado of resultadosFiltrados) {
+        const username =
+          obterUsernameTikTokResultado(
+            resultado
+          );
+
+        if (username) {
+          unicos.add(
+            normalizarUsername(
+              username
+            )
+          );
+        }
+      }
+
+      return unicos.size;
+    }, [
+      resultadosFiltrados,
       streamers,
     ]);
 
@@ -1536,33 +1545,145 @@ export default function AdminPage() {
 
   /*
    * ============================================================
+   * STREAMERS VISÍVEIS
+   * ============================================================
+   *
+   * O relatório do TikTok já traz o username_tiktok de cada
+   * criador. Por isso, o Admin não deve depender da tabela
+   * "streamers" para exibir os dados.
+   */
+  const streamersVisiveis =
+    useMemo(() => {
+      const mapa =
+        new Map<
+          string,
+          Streamer
+        >();
+
+      for (const resultado of resultados) {
+        const username =
+          obterUsernameTikTokResultado(
+            resultado
+          );
+
+        if (!username) {
+          continue;
+        }
+
+        const chave =
+          normalizarUsername(
+            username
+          );
+
+        if (!mapa.has(chave)) {
+          const cadastrado =
+            obterStreamerPorUsername(
+              username
+            );
+
+          mapa.set(
+            chave,
+            cadastrado || {
+              id: `virtual:${chave}`,
+              username_tiktok:
+                username,
+              email: "",
+              created_at:
+                resultado.data_importacao ||
+                new Date(0).toISOString(),
+            }
+          );
+        }
+      }
+
+      for (const streamer of streamers) {
+        const chave =
+          normalizarUsername(
+            streamer.username_tiktok
+          );
+
+        if (!mapa.has(chave)) {
+          mapa.set(
+            chave,
+            streamer
+          );
+        }
+      }
+
+      return Array.from(
+        mapa.values()
+      ).sort(
+        (a, b) =>
+          a.username_tiktok.localeCompare(
+            b.username_tiktok
+          )
+      );
+    }, [
+      resultados,
+      streamers,
+    ]);
+
+  /*
+   * ============================================================
    * RANKING
    * ============================================================
    */
 
   const rankingStreamers =
     useMemo(() => {
-      return streamers
+      return streamersVisiveis
         .map(
           (streamer) => {
-            const grupo =
-              obterGrupoDoStreamer(
-                streamer.id
+            const cadastrado =
+              obterStreamerPorUsername(
+                streamer.username_tiktok
               );
 
-            const ids =
+            const grupo =
+              cadastrado
+                ? obterGrupoDoStreamer(
+                    cadastrado.id
+                  )
+                : undefined;
+
+            const nomesDoGrupo =
               grupo
                 ? grupo.memberIds
+                    .map(
+                      (id) =>
+                        obterStreamer(
+                          id
+                        )?.username_tiktok
+                    )
+                    .filter(
+                      Boolean
+                    )
+                    .map(
+                      (username) =>
+                        normalizarUsername(
+                          username
+                        )
+                    )
                 : [
-                    streamer.id,
+                    normalizarUsername(
+                      streamer.username_tiktok
+                    ),
                   ];
 
             const dados =
               resultados.filter(
-                (resultado) =>
-                  ids.includes(
-                    resultado.streamer_id
-                  )
+                (resultado) => {
+                  const username =
+                    normalizarUsername(
+                      obterUsernameTikTokResultado(
+                        resultado
+                      )
+                    );
+
+                  return nomesDoGrupo.includes(
+                    username
+                  );
+                }
               );
 
             return {
@@ -1619,7 +1740,7 @@ export default function AdminPage() {
             a.diamantes
         );
     }, [
-      streamers,
+      streamersVisiveis,
       resultados,
       grupos,
     ]);
@@ -2127,7 +2248,7 @@ export default function AdminPage() {
             icon="👥"
             title="Streamers"
             value={formatarNumero(
-              streamers.length
+              streamersVisiveis.length
             )}
             subtitle={`${grupos.length} grupo(s) criado(s)`}
             accent="blue"
@@ -2540,7 +2661,7 @@ export default function AdminPage() {
               <SummaryRow
                 label="Streamers ativos"
                 value={
-                  streamers.length
+                  streamersVisiveis.length
                 }
                 icon="🎥"
               />
@@ -2923,7 +3044,7 @@ export default function AdminPage() {
 
                 <p className="mt-1 text-sm text-slate-400">
                   Envie o relatório exportado do TikTok.
-                  O sistema identifica os criadores automaticamente.
+                  O sistema usa o username_tiktok do arquivo para identificar cada streamer automaticamente.
                 </p>
 
               </div>
@@ -2933,91 +3054,6 @@ export default function AdminPage() {
           </div>
 
           <div className="p-6">
-
-            <div className="mb-5">
-
-              <label className="mb-2 block text-sm font-semibold text-slate-300">
-                Streamer deste relatório
-              </label>
-
-              <select
-                value={
-                  streamerSelecionado
-                }
-                onChange={(
-                  event
-                ) =>
-                  setStreamerSelecionado(
-                    event.target
-                      .value
-                  )
-                }
-                className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 md:max-w-md"
-              >
-
-                <option value="">
-                  Selecione o streamer
-                </option>
-
-                {streamers.map(
-                  (
-                    streamer
-                  ) => (
-                    <option
-                      key={
-                        streamer.id
-                      }
-                      value={
-                        streamer.id
-                      }
-                    >
-                      @
-                      {
-                        streamer.username_tiktok
-                      }
-                    </option>
-                  )
-                )}
-
-              </select>
-
-              {streamerSelecionado &&
-                obterGrupoDoStreamer(
-                  streamerSelecionado
-                ) && (
-
-                  <div className="mt-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3">
-
-                    <p className="text-xs font-semibold text-purple-400">
-                      🔗 Conta agrupada
-                    </p>
-
-                    <p className="mt-1 text-xs text-slate-400">
-
-                      Este relatório ficará
-                      vinculado à conta selecionada
-                      e também será considerado no
-                      consolidado do grupo{" "}
-
-                      <strong className="text-slate-200">
-
-                        {
-                          obterGrupoDoStreamer(
-                            streamerSelecionado
-                          )?.nome
-                        }
-
-                      </strong>
-
-                      .
-
-                    </p>
-
-                  </div>
-
-                )}
-
-            </div>
 
             <label
               className={`flex min-h-[230px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
@@ -3147,18 +3183,14 @@ export default function AdminPage() {
 
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
                     {
-                      new Set(
-                        resultadosFiltrados.map(
-                          (resultado) => resultado.streamer_id
-                        )
-                      ).size
+                      quantidadeStreamersFiltrados
                     }
                   </span>
 
                 </div>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  Cada linha representa os dados importados de um streamer.
+                  Cada linha representa um streamer encontrado no relatório do TikTok.
                 </p>
 
               </div>
@@ -3267,7 +3299,12 @@ export default function AdminPage() {
                     ) => {
 
                       const grupo =
-                        grupoDoResultado(
+                        obterGrupoDoResultado(
+                          resultado
+                        );
+
+                      const usernameTikTok =
+                        obterUsernameTikTokResultado(
                           resultado
                         );
 
@@ -3279,17 +3316,25 @@ export default function AdminPage() {
 
                           <td className="px-6 py-5">
 
-                            <p className="text-sm font-semibold text-white">
-                              {
-                                nomeStreamerResultado(
-                                  resultado
-                                )
-                              }
-                            </p>
+                            <div className="flex items-center gap-3">
 
-                            <p className="mt-1 text-xs text-slate-500">
-                              ID: {resultado.streamer_id}
-                            </p>
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-lg">
+                                🎥
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-white">
+                                  @
+                                  {usernameTikTok || "sem_username"}
+                                </p>
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Criador ID:{" "}
+                                  {resultado.criador_id}
+                                </p>
+                              </div>
+
+                            </div>
 
                           </td>
 
@@ -3307,7 +3352,7 @@ export default function AdminPage() {
                             ) : (
 
                               <span className="text-sm text-slate-500">
-                                Sem grupo
+                                —
                               </span>
 
                             )}
@@ -3910,16 +3955,24 @@ export default function AdminPage() {
 
                   <Info
                     titulo="Streamer"
-                    valor={nomeStreamer(
-                      resultadoSelecionado.streamer_id
-                    )}
+                    valor={
+                      obterUsernameTikTokResultado(
+                        resultadoSelecionado
+                      )
+                        ? `@${obterUsernameTikTokResultado(
+                            resultadoSelecionado
+                          )}`
+                        : nomeStreamer(
+                            resultadoSelecionado.streamer_id
+                          )
+                    }
                   />
 
                   <Info
                     titulo="Grupo"
                     valor={
-                      obterGrupoDoStreamer(
-                        resultadoSelecionado.streamer_id
+                      obterGrupoDoResultado(
+                        resultadoSelecionado
                       )?.nome
                     }
                   />
