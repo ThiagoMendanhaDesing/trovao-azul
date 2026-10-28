@@ -31,31 +31,18 @@ type Resultado = {
   status_nivel?: string | null;
   status_fa_clube?: string | null;
   status?: string | null;
-  dados_completos?: any;
+  dados_completos?: Record<string, any> | null;
   data_importacao?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
-type ImportResultado = {
+type ImportResultado = Omit<
+  Resultado,
+  "id" | "created_at" | "updated_at"
+> & {
   streamer_id: string;
   criador_id: string;
-  nome_criador: string | null;
-  grupo: string | null;
-  agente: string | null;
-  diamantes: number | null;
-  duracao_live: number | null;
-  dias_validos_live: number | null;
-  novos_seguidores: number | null;
-  transmissoes: number | null;
-  batalhas: number | null;
-  diamantes_batalhas: number | null;
-  diamantes_convidados: number | null;
-  status_graduacao: string | null;
-  status_nivel: string | null;
-  status_fa_clube: string | null;
-  status: string | null;
-  dados_completos: any;
   data_importacao: string;
 };
 
@@ -75,6 +62,8 @@ type MonthlyData = {
   batalhas: number;
   transmissoes: number;
 };
+
+const ADMIN_GROUP_PASSWORD = "0102";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -100,7 +89,8 @@ export default function AdminPage() {
   const [resultadoSelecionado, setResultadoSelecionado] =
     useState<Resultado | null>(null);
 
-  const [periodo, setPeriodo] = useState<"6" | "12">("6");
+  const [periodo, setPeriodo] =
+    useState<"6" | "12">("6");
 
   const [mostrarAgrupamento, setMostrarAgrupamento] =
     useState(false);
@@ -108,7 +98,8 @@ export default function AdminPage() {
   const [grupoSelecionado, setGrupoSelecionado] =
     useState<StreamerGroup | null>(null);
 
-  const [nomeGrupo, setNomeGrupo] = useState("");
+  const [nomeGrupo, setNomeGrupo] =
+    useState("");
 
   const [principalSelecionado, setPrincipalSelecionado] =
     useState("");
@@ -119,7 +110,20 @@ export default function AdminPage() {
   const [senhaAgrupamento, setSenhaAgrupamento] =
     useState("");
 
-  const [agrupando, setAgrupando] = useState(false);
+  const [agrupando, setAgrupando] =
+    useState(false);
+
+  /*
+   * IMPORTANTE:
+   * Não usamos new Date() diretamente no render.
+   * O horário atual é definido somente depois que
+   * o componente chega no navegador.
+   */
+  const [agora, setAgora] =
+    useState<Date | null>(null);
+
+  const [ultimaAtualizacao, setUltimaAtualizacao] =
+    useState("—");
 
   /*
    * ============================================================
@@ -128,6 +132,8 @@ export default function AdminPage() {
    */
 
   useEffect(() => {
+    setAgora(new Date());
+
     async function verificarAdmin() {
       setVerificando(true);
 
@@ -141,24 +147,23 @@ export default function AdminPage() {
         return;
       }
 
-      const { data: admin, error: adminError } =
-        await supabase
-          .from("admins")
-          .select("id")
-          .eq("user_id", user.id)
-          .maybeSingle();
+      const {
+        data: admin,
+        error: adminError,
+      } = await supabase
+        .from("admins")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (adminError) {
-        console.error(
-          "Erro ao verificar administrador:",
-          adminError
-        );
+      if (adminError || !admin) {
+        if (adminError) {
+          console.error(
+            "Erro ao verificar administrador:",
+            adminError
+          );
+        }
 
-        router.replace("/dashboard");
-        return;
-      }
-
-      if (!admin) {
         router.replace("/dashboard");
         return;
       }
@@ -179,6 +184,7 @@ export default function AdminPage() {
 
   async function carregarTudo() {
     setLoading(true);
+    setErro("");
 
     try {
       await Promise.all([
@@ -186,6 +192,10 @@ export default function AdminPage() {
         carregarResultados(),
         carregarGrupos(),
       ]);
+
+      setUltimaAtualizacao(
+        new Date().toLocaleString("pt-BR")
+      );
     } finally {
       setLoading(false);
     }
@@ -198,7 +208,10 @@ export default function AdminPage() {
    */
 
   async function carregarStreamers() {
-    const { data, error } = await supabase
+    const {
+      data,
+      error,
+    } = await supabase
       .from("streamers")
       .select(
         "id, username_tiktok, email, created_at"
@@ -213,6 +226,10 @@ export default function AdminPage() {
         error
       );
 
+      setErro(
+        `Erro ao carregar streamers: ${error.message}`
+      );
+
       return;
     }
 
@@ -224,7 +241,9 @@ export default function AdminPage() {
       lista.length === 1 &&
       !streamerSelecionado
     ) {
-      setStreamerSelecionado(lista[0].id);
+      setStreamerSelecionado(
+        lista[0].id
+      );
     }
   }
 
@@ -237,7 +256,10 @@ export default function AdminPage() {
   async function carregarResultados() {
     setLoadingResultados(true);
 
-    const { data, error } = await supabase
+    const {
+      data,
+      error,
+    } = await supabase
       .from("resultados_streamers")
       .select(`
         id,
@@ -294,15 +316,17 @@ export default function AdminPage() {
    */
 
   async function carregarGrupos() {
-    const { data: groups, error: groupError } =
-      await supabase
-        .from("streamer_groups")
-        .select(
-          "id, nome, streamer_principal_id, created_at"
-        )
-        .order("created_at", {
-          ascending: false,
-        });
+    const {
+      data: groups,
+      error: groupError,
+    } = await supabase
+      .from("streamer_groups")
+      .select(
+        "id, nome, streamer_principal_id, created_at"
+      )
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (groupError) {
       console.error(
@@ -310,20 +334,30 @@ export default function AdminPage() {
         groupError
       );
 
+      setErro(
+        `Erro ao carregar grupos: ${groupError.message}`
+      );
+
       return;
     }
 
-    const { data: members, error: memberError } =
-      await supabase
-        .from("streamer_group_members")
-        .select(
-          "group_id, streamer_id"
-        );
+    const {
+      data: members,
+      error: memberError,
+    } = await supabase
+      .from("streamer_group_members")
+      .select(
+        "group_id, streamer_id"
+      );
 
     if (memberError) {
       console.error(
         "Erro ao carregar membros dos grupos:",
         memberError
+      );
+
+      setErro(
+        `Erro ao carregar membros dos grupos: ${memberError.message}`
       );
 
       return;
@@ -336,15 +370,18 @@ export default function AdminPage() {
         streamer_principal_id:
           group.streamer_principal_id,
         created_at: group.created_at,
-        memberIds: (members || [])
-          .filter(
-            (member) =>
-              member.group_id === group.id
-          )
-          .map(
-            (member) =>
-              member.streamer_id
-          ),
+
+        memberIds:
+          (members || [])
+            .filter(
+              (member) =>
+                member.group_id ===
+                group.id
+            )
+            .map(
+              (member) =>
+                member.streamer_id
+            ),
       }));
 
     setGrupos(gruposMontados);
@@ -356,7 +393,9 @@ export default function AdminPage() {
    * ============================================================
    */
 
-  function normalizarTexto(valor: any): string {
+  function normalizarTexto(
+    valor: any
+  ): string {
     if (
       valor === null ||
       valor === undefined
@@ -378,7 +417,9 @@ export default function AdminPage() {
       );
   }
 
-  function numero(valor: any): number | null {
+  function numero(
+    valor: any
+  ): number | null {
     if (
       valor === null ||
       valor === undefined ||
@@ -387,18 +428,21 @@ export default function AdminPage() {
       return null;
     }
 
-    if (typeof valor === "number") {
+    if (
+      typeof valor === "number"
+    ) {
       return Number.isFinite(valor)
         ? valor
         : null;
     }
 
-    let texto = String(valor).trim();
-
-    texto = texto.replace(
-      /[^\d,.-]/g,
-      ""
-    );
+    let texto =
+      String(valor)
+        .trim()
+        .replace(
+          /[^\d,.-]/g,
+          ""
+        );
 
     if (
       texto.includes(",") &&
@@ -410,13 +454,15 @@ export default function AdminPage() {
     } else if (
       texto.includes(",")
     ) {
-      texto = texto.replace(
-        ",",
-        "."
-      );
+      texto =
+        texto.replace(
+          ",",
+          "."
+        );
     }
 
-    const n = Number(texto);
+    const n =
+      Number(texto);
 
     return Number.isFinite(n)
       ? n
@@ -427,21 +473,31 @@ export default function AdminPage() {
     row: Record<string, any>,
     nomes: string[]
   ) {
-    const chaves = Object.keys(row);
+    const chaves =
+      Object.keys(row);
 
-    for (const nome of nomes) {
+    for (
+      const nome of nomes
+    ) {
       const procurada =
-        normalizarTexto(nome);
+        normalizarTexto(
+          nome
+        );
 
       const chaveEncontrada =
         chaves.find(
           (chave) =>
-            normalizarTexto(chave) ===
-            procurada
+            normalizarTexto(
+              chave
+            ) === procurada
         );
 
-      if (chaveEncontrada) {
-        return row[chaveEncontrada];
+      if (
+        chaveEncontrada
+      ) {
+        return row[
+          chaveEncontrada
+        ];
       }
     }
 
@@ -452,41 +508,55 @@ export default function AdminPage() {
     row: Record<string, any>,
     termos: string[]
   ) {
-    const chaves = Object.keys(row);
+    const chaves =
+      Object.keys(row);
 
     const chaveEncontrada =
-      chaves.find((chave) => {
-        const normalizada =
-          normalizarTexto(chave);
+      chaves.find(
+        (chave) => {
+          const normalizada =
+            normalizarTexto(
+              chave
+            );
 
-        return termos.some(
-          (termo) =>
-            normalizada.includes(
-              normalizarTexto(termo)
-            )
-        );
-      });
+          return termos.some(
+            (termo) =>
+              normalizada.includes(
+                normalizarTexto(
+                  termo
+                )
+              )
+          );
+        }
+      );
 
-    if (!chaveEncontrada) {
+    if (
+      !chaveEncontrada
+    ) {
       return null;
     }
 
-    return row[chaveEncontrada];
+    return row[
+      chaveEncontrada
+    ];
   }
 
   function obterCriadorId(
     row: Record<string, any>
   ): string {
     const valor =
-      encontrarColuna(row, [
-        "criador_id",
-        "creator_id",
-        "creatorid",
-        "id_criador",
-        "id do criador",
-        "id",
-        "creator id",
-      ]) ??
+      encontrarColuna(
+        row,
+        [
+          "criador_id",
+          "creator_id",
+          "creatorid",
+          "id_criador",
+          "id do criador",
+          "id",
+          "creator id",
+        ]
+      ) ??
       encontrarColunaContendo(
         row,
         [
@@ -506,16 +576,19 @@ export default function AdminPage() {
     row: Record<string, any>
   ): string | null {
     const valor =
-      encontrarColuna(row, [
-        "nome_criador",
-        "nome do criador",
-        "criador",
-        "nome",
-        "creator_name",
-        "creator name",
-        "username",
-        "nickname",
-      ]);
+      encontrarColuna(
+        row,
+        [
+          "nome_criador",
+          "nome do criador",
+          "criador",
+          "nome",
+          "creator_name",
+          "creator name",
+          "username",
+          "nickname",
+        ]
+      );
 
     if (
       valor === null ||
@@ -525,7 +598,9 @@ export default function AdminPage() {
       return null;
     }
 
-    return String(valor).trim();
+    return String(
+      valor
+    ).trim();
   }
 
   function formatarNumero(
@@ -536,7 +611,9 @@ export default function AdminPage() {
   ) {
     return new Intl.NumberFormat(
       "pt-BR"
-    ).format(Number(valor) || 0);
+    ).format(
+      Number(valor) || 0
+    );
   }
 
   function formatarData(
@@ -546,7 +623,8 @@ export default function AdminPage() {
       return "—";
     }
 
-    const data = new Date(valor);
+    const data =
+      new Date(valor);
 
     if (
       Number.isNaN(
@@ -568,7 +646,8 @@ export default function AdminPage() {
       return "—";
     }
 
-    const data = new Date(valor);
+    const data =
+      new Date(valor);
 
     if (
       Number.isNaN(
@@ -607,7 +686,9 @@ export default function AdminPage() {
     streamerId: string
   ) {
     const streamer =
-      obterStreamer(streamerId);
+      obterStreamer(
+        streamerId
+      );
 
     return streamer
       ? `@${streamer.username_tiktok}`
@@ -629,7 +710,9 @@ export default function AdminPage() {
       );
 
     if (!grupo) {
-      return [streamerId];
+      return [
+        streamerId,
+      ];
     }
 
     return grupo.memberIds;
@@ -639,7 +722,9 @@ export default function AdminPage() {
     streamerId: string
   ) {
     const ids =
-      idsDoGrupo(streamerId);
+      idsDoGrupo(
+        streamerId
+      );
 
     return resultados.filter(
       (resultado) =>
@@ -692,7 +777,8 @@ export default function AdminPage() {
       const buffer =
         await file.arrayBuffer();
 
-      let workbook: XLSX.WorkBook;
+      let workbook:
+        XLSX.WorkBook;
 
       if (
         extensao === "csv"
@@ -703,20 +789,28 @@ export default function AdminPage() {
           ).decode(buffer);
 
         workbook =
-          XLSX.read(texto, {
-            type: "string",
-            raw: true,
-          });
+          XLSX.read(
+            texto,
+            {
+              type: "string",
+              raw: true,
+            }
+          );
       } else {
         workbook =
-          XLSX.read(buffer, {
-            type: "array",
-            raw: false,
-          });
+          XLSX.read(
+            buffer,
+            {
+              type: "array",
+              raw: false,
+            }
+          );
       }
 
       if (
-        !workbook.SheetNames.length
+        !workbook
+          .SheetNames
+          .length
       ) {
         throw new Error(
           "Não encontrei nenhuma planilha no arquivo."
@@ -731,30 +825,40 @@ export default function AdminPage() {
       const linhas =
         XLSX.utils.sheet_to_json<
           Record<string, any>
-        >(primeiraPlanilha, {
-          defval: null,
-          raw: false,
-        });
+        >(
+          primeiraPlanilha,
+          {
+            defval: null,
+            raw: false,
+          }
+        );
 
-      if (!linhas.length) {
+      if (
+        !linhas.length
+      ) {
         throw new Error(
           "A planilha está vazia ou não foi possível ler os dados."
         );
       }
 
-      const importados:
-        ImportResultado[] = [];
+      const dataImportacao =
+        new Date().toISOString();
 
-      for (const row of linhas) {
+      const importados:
+        ImportResultado[] =
+        [];
+
+      for (
+        const row of linhas
+      ) {
         const criadorId =
-          obterCriadorId(row);
+          obterCriadorId(
+            row
+          );
 
         if (!criadorId) {
           continue;
         }
-
-        const nomeCriador =
-          obterNomeCriador(row);
 
         const resultado:
           ImportResultado = {
@@ -765,7 +869,9 @@ export default function AdminPage() {
             criadorId,
 
           nome_criador:
-            nomeCriador,
+            obterNomeCriador(
+              row
+            ),
 
           grupo:
             encontrarColuna(
@@ -948,7 +1054,7 @@ export default function AdminPage() {
             row,
 
           data_importacao:
-            new Date().toISOString(),
+            dataImportacao,
         };
 
         importados.push(
@@ -956,7 +1062,9 @@ export default function AdminPage() {
         );
       }
 
-      if (!importados.length) {
+      if (
+        !importados.length
+      ) {
         throw new Error(
           "Não encontrei nenhum criador válido no arquivo. Verifique se o relatório possui uma coluna de ID do criador."
         );
@@ -968,7 +1076,9 @@ export default function AdminPage() {
           ImportResultado
         >();
 
-      for (const resultado of importados) {
+      for (
+        const resultado of importados
+      ) {
         const chave =
           `${resultado.streamer_id}_${resultado.criador_id}`;
 
@@ -997,7 +1107,9 @@ export default function AdminPage() {
           }
         );
 
-      if (salvarError) {
+      if (
+        salvarError
+      ) {
         throw new Error(
           `Erro ao salvar resultados: ${salvarError.message}`
         );
@@ -1005,10 +1117,18 @@ export default function AdminPage() {
 
       await carregarResultados();
 
+      setUltimaAtualizacao(
+        new Date().toLocaleString(
+          "pt-BR"
+        )
+      );
+
       setMensagem(
         `Importação concluída! ${resultadosUnicos.length} criadores foram processados com sucesso.`
       );
-    } catch (error: any) {
+    } catch (
+      error: any
+    ) {
       console.error(
         "Erro na importação:",
         error
@@ -1032,34 +1152,43 @@ export default function AdminPage() {
   const resultadosFiltrados =
     useMemo(() => {
       const termo =
-        busca.trim().toLowerCase();
+        busca
+          .trim()
+          .toLowerCase();
 
       if (!termo) {
         return resultados;
       }
 
       return resultados.filter(
-        (resultado) => {
-          return (
-            resultado.nome_criador
-              ?.toLowerCase()
-              .includes(termo) ||
-            resultado.criador_id
-              ?.toLowerCase()
-              .includes(termo) ||
-            resultado.grupo
-              ?.toLowerCase()
-              .includes(termo) ||
-            resultado.agente
-              ?.toLowerCase()
-              .includes(termo) ||
-            nomeStreamer(
-              resultado.streamer_id
+        (resultado) =>
+          resultado.nome_criador
+            ?.toLowerCase()
+            .includes(
+              termo
+            ) ||
+          resultado.criador_id
+            ?.toLowerCase()
+            .includes(
+              termo
+            ) ||
+          resultado.grupo
+            ?.toLowerCase()
+            .includes(
+              termo
+            ) ||
+          resultado.agente
+            ?.toLowerCase()
+            .includes(
+              termo
+            ) ||
+          nomeStreamer(
+            resultado.streamer_id
+          )
+            .toLowerCase()
+            .includes(
+              termo
             )
-              .toLowerCase()
-              .includes(termo)
-          );
-        }
       );
     }, [
       resultados,
@@ -1069,7 +1198,7 @@ export default function AdminPage() {
 
   /*
    * ============================================================
-   * RESULTADOS DO PAINEL
+   * TOTAIS
    * ============================================================
    */
 
@@ -1121,8 +1250,9 @@ export default function AdminPage() {
 
   const dadosMensais =
     useMemo(() => {
-      const agora =
-        new Date();
+      if (!agora) {
+        return [];
+      }
 
       const quantidade =
         Number(periodo);
@@ -1139,8 +1269,7 @@ export default function AdminPage() {
         const data =
           new Date(
             agora.getFullYear(),
-            agora.getMonth() -
-              i,
+            agora.getMonth() - i,
             1
           );
 
@@ -1215,21 +1344,28 @@ export default function AdminPage() {
 
         meses.push({
           label:
-            data.toLocaleDateString(
-              "pt-BR",
-              {
-                month: "short",
-              }
-            )
-              .replace(".", "")
+            data
+              .toLocaleDateString(
+                "pt-BR",
+                {
+                  month:
+                    "short",
+                }
+              )
+              .replace(
+                ".",
+                ""
+              )
               .toUpperCase(),
 
           fullLabel:
             data.toLocaleDateString(
               "pt-BR",
               {
-                month: "long",
-                year: "numeric",
+                month:
+                  "long",
+                year:
+                  "numeric",
               }
             ),
 
@@ -1242,6 +1378,7 @@ export default function AdminPage() {
 
       return meses;
     }, [
+      agora,
       resultados,
       periodo,
     ]);
@@ -1261,11 +1398,9 @@ export default function AdminPage() {
     anterior: number
   ) {
     if (!anterior) {
-      if (!atual) {
-        return 0;
-      }
-
-      return 100;
+      return atual
+        ? 100
+        : 0;
     }
 
     return (
@@ -1274,12 +1409,6 @@ export default function AdminPage() {
       100
     );
   }
-
-  const variacaoDiamantes =
-    calcularVariacao(
-      mesAtual?.diamantes || 0,
-      mesAnterior?.diamantes || 0
-    );
 
   const maxDiamantes =
     Math.max(
@@ -1292,69 +1421,83 @@ export default function AdminPage() {
 
   /*
    * ============================================================
-   * RANKING DE STREAMERS
+   * RANKING
    * ============================================================
    */
 
   const rankingStreamers =
     useMemo(() => {
       return streamers
-        .map((streamer) => {
-          const grupo =
-            obterGrupoDoStreamer(
-              streamer.id
-            );
+        .map(
+          (streamer) => {
+            const grupo =
+              obterGrupoDoStreamer(
+                streamer.id
+              );
 
-          const ids =
-            grupo
-              ? grupo.memberIds
-              : [streamer.id];
+            const ids =
+              grupo
+                ? grupo.memberIds
+                : [
+                    streamer.id,
+                  ];
 
-          const dados =
-            resultados.filter(
-              (resultado) =>
-                ids.includes(
-                  resultado.streamer_id
-                )
-            );
+            const dados =
+              resultados.filter(
+                (resultado) =>
+                  ids.includes(
+                    resultado.streamer_id
+                  )
+              );
 
-          return {
-            streamer,
-            grupo,
-            diamantes:
-              dados.reduce(
-                (total, item) =>
-                  total +
-                  (Number(
-                    item.diamantes
-                  ) || 0),
-                0
-              ),
+            return {
+              streamer,
+              grupo,
 
-            seguidores:
-              dados.reduce(
-                (total, item) =>
-                  total +
-                  (Number(
-                    item.novos_seguidores
-                  ) || 0),
-                0
-              ),
+              diamantes:
+                dados.reduce(
+                  (
+                    total,
+                    item
+                  ) =>
+                    total +
+                    (Number(
+                      item.diamantes
+                    ) || 0),
+                  0
+                ),
 
-            batalhas:
-              dados.reduce(
-                (total, item) =>
-                  total +
-                  (Number(
-                    item.batalhas
-                  ) || 0),
-                0
-              ),
+              seguidores:
+                dados.reduce(
+                  (
+                    total,
+                    item
+                  ) =>
+                    total +
+                    (Number(
+                      item.novos_seguidores
+                    ) || 0),
+                  0
+                ),
 
-            criadores:
-              dados.length,
-          };
-        })
+              batalhas:
+                dados.reduce(
+                  (
+                    total,
+                    item
+                  ) =>
+                    total +
+                    (Number(
+                      item.batalhas
+                    ) || 0),
+                  0
+                ),
+
+              criadores:
+                dados.length,
+            };
+          }
+        )
         .sort(
           (a, b) =>
             b.diamantes -
@@ -1373,53 +1516,78 @@ export default function AdminPage() {
    */
 
   function abrirNovoGrupo() {
-    setGrupoSelecionado(null);
+    setGrupoSelecionado(
+      null
+    );
+
     setNomeGrupo("");
-    setPrincipalSelecionado("");
-    setMembrosSelecionados([]);
-    setSenhaAgrupamento("");
+
+    setPrincipalSelecionado(
+      ""
+    );
+
+    setMembrosSelecionados(
+      []
+    );
+
+    setSenhaAgrupamento(
+      ""
+    );
+
     setErro("");
-    setMostrarAgrupamento(true);
+
+    setMostrarAgrupamento(
+      true
+    );
   }
 
   function abrirEditarGrupo(
     grupo: StreamerGroup
   ) {
-    setGrupoSelecionado(grupo);
-    setNomeGrupo(grupo.nome);
+    setGrupoSelecionado(
+      grupo
+    );
+
+    setNomeGrupo(
+      grupo.nome
+    );
+
     setPrincipalSelecionado(
       grupo.streamer_principal_id
     );
+
     setMembrosSelecionados(
       grupo.memberIds
     );
-    setSenhaAgrupamento("");
+
+    setSenhaAgrupamento(
+      ""
+    );
+
     setErro("");
-    setMostrarAgrupamento(true);
+
+    setMostrarAgrupamento(
+      true
+    );
   }
 
   function alternarMembro(
     streamerId: string
   ) {
     setMembrosSelecionados(
-      (atual) => {
-        if (
-          atual.includes(
-            streamerId
-          )
-        ) {
-          return atual.filter(
-            (id) =>
-              id !==
-              streamerId
-          );
-        }
-
-        return [
-          ...atual,
-          streamerId,
-        ];
-      }
+      (atual) =>
+        atual.includes(
+          streamerId
+        )
+          ? atual.filter(
+              (id) =>
+                id !==
+                streamerId
+            )
+          : [
+              ...atual,
+              streamerId,
+            ]
     );
   }
 
@@ -1429,7 +1597,7 @@ export default function AdminPage() {
 
     if (
       senhaAgrupamento !==
-      "0102"
+      ADMIN_GROUP_PASSWORD
     ) {
       setErro(
         "Senha administrativa incorreta."
@@ -1466,7 +1634,10 @@ export default function AdminPage() {
         ])
       );
 
-    if (membros.length < 2) {
+    if (
+      membros.length <
+      2
+    ) {
       setErro(
         "Selecione pelo menos duas contas para criar um agrupamento."
       );
@@ -1478,9 +1649,7 @@ export default function AdminPage() {
 
     try {
       /*
-       * Uma conta não pode pertencer a dois grupos.
-       * Removemos essa conta de grupos anteriores
-       * antes de criar/atualizar o grupo atual.
+       * Uma conta não pode ficar em dois grupos.
        */
 
       const {
@@ -1495,7 +1664,9 @@ export default function AdminPage() {
           membros
         );
 
-      if (removerError) {
+      if (
+        removerError
+      ) {
         throw new Error(
           `Erro ao preparar agrupamento: ${removerError.message}`
         );
@@ -1504,11 +1675,16 @@ export default function AdminPage() {
       let groupId =
         grupoSelecionado?.id;
 
+      /*
+       * ATUALIZA GRUPO
+       */
+
       if (
         grupoSelecionado
       ) {
         const {
-          error: updateError,
+          error:
+            updateError,
         } = await supabase
           .from(
             "streamer_groups"
@@ -1516,6 +1692,7 @@ export default function AdminPage() {
           .update({
             nome:
               nomeGrupo.trim(),
+
             streamer_principal_id:
               principalSelecionado,
           })
@@ -1524,15 +1701,25 @@ export default function AdminPage() {
             grupoSelecionado.id
           );
 
-        if (updateError) {
+        if (
+          updateError
+        ) {
           throw new Error(
             `Erro ao atualizar grupo: ${updateError.message}`
           );
         }
-      } else {
+      }
+
+      /*
+       * CRIA GRUPO
+       */
+
+      else {
         const {
-          data: novoGrupo,
-          error: createError,
+          data:
+            novoGrupo,
+          error:
+            createError,
         } = await supabase
           .from(
             "streamer_groups"
@@ -1540,6 +1727,7 @@ export default function AdminPage() {
           .insert({
             nome:
               nomeGrupo.trim(),
+
             streamer_principal_id:
               principalSelecionado,
           })
@@ -1548,7 +1736,9 @@ export default function AdminPage() {
           )
           .single();
 
-        if (createError) {
+        if (
+          createError
+        ) {
           throw new Error(
             `Erro ao criar grupo: ${createError.message}`
           );
@@ -1569,13 +1759,15 @@ export default function AdminPage() {
           (streamerId) => ({
             group_id:
               groupId,
+
             streamer_id:
               streamerId,
           })
         );
 
       const {
-        error: membersError,
+        error:
+          membersError,
       } = await supabase
         .from(
           "streamer_group_members"
@@ -1584,7 +1776,9 @@ export default function AdminPage() {
           registros
         );
 
-      if (membersError) {
+      if (
+        membersError
+      ) {
         throw new Error(
           `Erro ao adicionar contas ao grupo: ${membersError.message}`
         );
@@ -1601,7 +1795,9 @@ export default function AdminPage() {
       setMostrarAgrupamento(
         false
       );
-    } catch (error: any) {
+    } catch (
+      error: any
+    ) {
       console.error(
         "Erro no agrupamento:",
         error
@@ -1612,7 +1808,9 @@ export default function AdminPage() {
           "Não foi possível salvar o agrupamento."
       );
     } finally {
-      setAgrupando(false);
+      setAgrupando(
+        false
+      );
     }
   }
 
@@ -1624,8 +1822,13 @@ export default function AdminPage() {
         "Digite a senha administrativa para excluir este grupo:"
       );
 
-    if (senha !== "0102") {
-      if (senha !== null) {
+    if (
+      senha !==
+      ADMIN_GROUP_PASSWORD
+    ) {
+      if (
+        senha !== null
+      ) {
         setErro(
           "Senha administrativa incorreta."
         );
@@ -1676,11 +1879,13 @@ export default function AdminPage() {
    * ============================================================
    */
 
-  if (verificando) {
+  if (
+    verificando
+  ) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
         <div className="text-center">
-          <div className="mb-4 text-5xl animate-pulse">
+          <div className="mb-4 animate-pulse text-5xl">
             ⚡
           </div>
 
@@ -1700,32 +1905,39 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
+
       {/* HEADER */}
 
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#020617]/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-6">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/20">
-                ⚡
-              </div>
 
-              <div>
-                <h1 className="text-lg font-bold">
-                  Trovão Azul
-                </h1>
+          <div className="flex items-center gap-3">
 
-                <p className="text-xs text-blue-400">
-                  Painel Administrativo
-                </p>
-              </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/20">
+              ⚡
             </div>
+
+            <div>
+              <h1 className="text-lg font-bold">
+                Trovão Azul
+              </h1>
+
+              <p className="text-xs text-blue-400">
+                Painel Administrativo
+              </p>
+            </div>
+
           </div>
 
           <div className="flex items-center gap-2">
+
             <button
-              onClick={carregarTudo}
-              disabled={loading}
+              onClick={
+                carregarTudo
+              }
+              disabled={
+                loading
+              }
               className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
             >
               {loading
@@ -1743,16 +1955,22 @@ export default function AdminPage() {
             >
               Voltar
             </button>
+
           </div>
+
         </div>
       </header>
 
       <section className="mx-auto max-w-7xl px-5 py-8 lg:px-6">
+
         {/* HERO */}
 
         <div className="mb-8 overflow-hidden rounded-3xl border border-blue-500/20 bg-gradient-to-br from-blue-600/10 via-[#0f172a] to-purple-600/10 p-7">
+
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+
             <div>
+
               <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
                 Administração
               </p>
@@ -1762,29 +1980,34 @@ export default function AdminPage() {
               </h2>
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-                Visão geral da agência, desempenho
-                dos streamers, importações e
-                contas agrupadas.
+                Visão geral da agência,
+                desempenho dos streamers,
+                importações e contas
+                agrupadas.
               </p>
+
             </div>
 
             <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-5 py-4">
+
               <p className="text-xs text-slate-500">
                 Última atualização
               </p>
 
               <p className="mt-1 text-sm font-semibold text-slate-200">
-                {new Date().toLocaleString(
-                  "pt-BR"
-                )}
+                {ultimaAtualizacao}
               </p>
+
             </div>
+
           </div>
+
         </div>
 
         {/* CARDS PRINCIPAIS */}
 
         <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
           <MetricCard
             icon="👥"
             title="Streamers"
@@ -1826,13 +2049,17 @@ export default function AdminPage() {
             )} transmissões`}
             accent="orange"
           />
+
         </div>
 
         {/* COMPARAÇÃO */}
 
         <div className="mb-8 rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
+
           <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
+
             <div>
+
               <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
                 Performance
               </p>
@@ -1842,13 +2069,19 @@ export default function AdminPage() {
               </h3>
 
               <p className="mt-1 text-sm text-slate-500">
-                Acompanhe a evolução dos indicadores.
+                Acompanhe a evolução dos
+                principais indicadores.
               </p>
+
             </div>
 
             <select
-              value={periodo}
-              onChange={(event) =>
+              value={
+                periodo
+              }
+              onChange={(
+                event
+              ) =>
                 setPeriodo(
                   event.target
                     .value as
@@ -1866,9 +2099,11 @@ export default function AdminPage() {
                 Últimos 12 meses
               </option>
             </select>
+
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
+
             <ComparisonCard
               title="💎 Diamantes"
               current={
@@ -1879,7 +2114,12 @@ export default function AdminPage() {
                 mesAnterior?.diamantes ||
                 0
               }
-              variation={variacaoDiamantes}
+              variation={calcularVariacao(
+                mesAtual?.diamantes ||
+                  0,
+                mesAnterior?.diamantes ||
+                  0
+              )}
             />
 
             <ComparisonCard
@@ -1917,29 +2157,39 @@ export default function AdminPage() {
                   0
               )}
             />
+
           </div>
 
+          {/* GRÁFICO */}
+
           <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+
             <div className="mb-5 flex items-center justify-between">
+
               <div>
+
                 <h4 className="font-bold">
                   Evolução de diamantes
                 </h4>
 
-                <p className="text-xs text-slate-500">
+                <p className="text-xs capitalize text-slate-500">
                   {mesAtual?.fullLabel ||
-                    "Período atual"}
+                    "Carregando período..."}
                 </p>
+
               </div>
 
               <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-bold text-purple-400">
                 💎 Total
               </span>
+
             </div>
 
             <div className="flex h-64 items-end gap-2 overflow-x-auto pb-2">
+
               {dadosMensais.map(
                 (item) => {
+
                   const altura =
                     Math.max(
                       (item.diamantes /
@@ -1957,6 +2207,7 @@ export default function AdminPage() {
                       }
                       className="flex min-w-[48px] flex-1 flex-col items-center justify-end gap-2"
                     >
+
                       <span className="text-[10px] font-semibold text-slate-400">
                         {item.diamantes
                           ? formatarNumero(
@@ -1966,6 +2217,7 @@ export default function AdminPage() {
                       </span>
 
                       <div className="flex h-44 w-full items-end justify-center">
+
                         <div
                           title={`${item.fullLabel}: ${formatarNumero(
                             item.diamantes
@@ -1975,25 +2227,34 @@ export default function AdminPage() {
                             height: `${altura}%`,
                           }}
                         />
+
                       </div>
 
                       <span className="text-[10px] font-bold text-slate-500">
                         {item.label}
                       </span>
+
                     </div>
                   );
                 }
               )}
+
             </div>
+
           </div>
+
         </div>
 
         {/* RANKING */}
 
         <div className="mb-8 grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+
           <div className="rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
+
             <div className="mb-6 flex items-center justify-between">
+
               <div>
+
                 <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
                   Ranking
                 </p>
@@ -2001,17 +2262,21 @@ export default function AdminPage() {
                 <h3 className="mt-1 text-2xl font-bold">
                   Desempenho dos streamers
                 </h3>
+
               </div>
 
               <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-bold text-blue-400">
-                Top {Math.min(
+                Top{" "}
+                {Math.min(
                   rankingStreamers.length,
                   5
                 )}
               </span>
+
             </div>
 
             <div className="space-y-3">
+
               {rankingStreamers
                 .slice(0, 5)
                 .map(
@@ -2019,6 +2284,7 @@ export default function AdminPage() {
                     item,
                     index
                   ) => {
+
                     const maior =
                       rankingStreamers[0]
                         ?.diamantes ||
@@ -2032,17 +2298,22 @@ export default function AdminPage() {
                     return (
                       <div
                         key={
-                          item.streamer.id
+                          item.streamer
+                            .id
                         }
                         className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
                       >
+
                         <div className="mb-3 flex items-center justify-between gap-4">
+
                           <div className="flex min-w-0 items-center gap-3">
+
                             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-sm font-bold">
                               {index + 1}
                             </div>
 
                             <div className="min-w-0">
+
                               <p className="truncate font-bold">
                                 @
                                 {
@@ -2062,10 +2333,13 @@ export default function AdminPage() {
                                   }
                                 </p>
                               )}
+
                             </div>
+
                           </div>
 
                           <div className="text-right">
+
                             <p className="font-bold text-purple-400">
                               {formatarNumero(
                                 item.diamantes
@@ -2078,10 +2352,13 @@ export default function AdminPage() {
                               )}{" "}
                               criadores
                             </p>
+
                           </div>
+
                         </div>
 
                         <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+
                           <div
                             className="h-full rounded-full bg-gradient-to-r from-blue-600 to-purple-500 transition-all duration-700"
                             style={{
@@ -2093,9 +2370,11 @@ export default function AdminPage() {
                               )}%`,
                             }}
                           />
+
                         </div>
 
                         <div className="mt-2 flex justify-between text-[11px] text-slate-500">
+
                           <span>
                             +{" "}
                             {formatarNumero(
@@ -2110,7 +2389,9 @@ export default function AdminPage() {
                               item.batalhas
                             )}
                           </span>
+
                         </div>
+
                       </div>
                     );
                   }
@@ -2122,12 +2403,15 @@ export default function AdminPage() {
                   Nenhum streamer cadastrado.
                 </div>
               )}
+
             </div>
+
           </div>
 
           {/* RESUMO */}
 
           <div className="rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
+
             <p className="text-xs font-bold uppercase tracking-widest text-purple-400">
               Resumo
             </p>
@@ -2137,38 +2421,51 @@ export default function AdminPage() {
             </h3>
 
             <div className="mt-6 space-y-4">
+
               <SummaryRow
                 label="Streamers ativos"
-                value={streamers.length}
+                value={
+                  streamers.length
+                }
                 icon="🎥"
               />
 
               <SummaryRow
                 label="Grupos de contas"
-                value={grupos.length}
+                value={
+                  grupos.length
+                }
                 icon="🔗"
               />
 
               <SummaryRow
                 label="Criadores"
-                value={resultados.length}
+                value={
+                  resultados.length
+                }
                 icon="👤"
               />
 
               <SummaryRow
                 label="Transmissões"
-                value={totalTransmissoes}
+                value={
+                  totalTransmissoes
+                }
                 icon="📡"
               />
 
               <SummaryRow
                 label="Batalhas"
-                value={totalBatalhas}
+                value={
+                  totalBatalhas
+                }
                 icon="⚔️"
               />
+
             </div>
 
             <div className="mt-6 rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4">
+
               <p className="text-xs text-slate-500">
                 Maior streamer
               </p>
@@ -2197,15 +2494,21 @@ export default function AdminPage() {
                   Sem dados
                 </p>
               )}
+
             </div>
+
           </div>
+
         </div>
 
         {/* AGRUPAMENTO */}
 
         <div className="mb-8 rounded-3xl border border-purple-500/20 bg-gradient-to-br from-purple-500/5 via-[#0b1224] to-blue-500/5">
+
           <div className="flex flex-col justify-between gap-5 border-b border-slate-800 p-6 md:flex-row md:items-center">
+
             <div>
+
               <p className="text-xs font-bold uppercase tracking-widest text-purple-400">
                 Gestão de contas
               </p>
@@ -2215,11 +2518,12 @@ export default function AdminPage() {
               </h3>
 
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-                Una duas ou mais contas do mesmo streamer
-                para que os resultados sejam analisados
-                de forma consolidada, sem apagar os dados
-                individuais.
+                Una duas ou mais contas do mesmo
+                streamer. Os dados permanecem
+                separados no banco, mas os painéis
+                usam o resultado consolidado do grupo.
               </p>
+
             </div>
 
             <button
@@ -2230,12 +2534,15 @@ export default function AdminPage() {
             >
               + Agrupar contas
             </button>
+
           </div>
 
           <div className="p-6">
+
             {grupos.length ===
             0 ? (
               <div className="rounded-2xl border border-dashed border-slate-700 p-8 text-center">
+
                 <div className="text-4xl">
                   🔗
                 </div>
@@ -2249,11 +2556,14 @@ export default function AdminPage() {
                   de conta, você poderá vincular a nova
                   conta à antiga.
                 </p>
+
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
+
                 {grupos.map(
                   (grupo) => {
+
                     const principal =
                       obterStreamer(
                         grupo.streamer_principal_id
@@ -2262,9 +2572,7 @@ export default function AdminPage() {
                     const membros =
                       grupo.memberIds
                         .map(
-                          (
-                            id
-                          ) =>
+                          (id) =>
                             obterStreamer(
                               id
                             )
@@ -2274,17 +2582,9 @@ export default function AdminPage() {
                         ) as Streamer[];
 
                     const dados =
-                      grupo.memberIds
-                        .flatMap(
-                          (id) =>
-                            resultados.filter(
-                              (
-                                resultado
-                              ) =>
-                                resultado.streamer_id ===
-                                id
-                            )
-                        );
+                      resultadosDoGrupo(
+                        grupo.streamer_principal_id
+                      );
 
                     const diamantes =
                       dados.reduce(
@@ -2295,8 +2595,33 @@ export default function AdminPage() {
                           total +
                           (Number(
                             item.diamantes
-                          ) ||
-                            0),
+                          ) || 0),
+                        0
+                      );
+
+                    const seguidores =
+                      dados.reduce(
+                        (
+                          total,
+                          item
+                        ) =>
+                          total +
+                          (Number(
+                            item.novos_seguidores
+                          ) || 0),
+                        0
+                      );
+
+                    const batalhas =
+                      dados.reduce(
+                        (
+                          total,
+                          item
+                        ) =>
+                          total +
+                          (Number(
+                            item.batalhas
+                          ) || 0),
                         0
                       );
 
@@ -2307,9 +2632,13 @@ export default function AdminPage() {
                         }
                         className="rounded-2xl border border-slate-800 bg-slate-950/50 p-5"
                       >
+
                         <div className="flex items-start justify-between gap-4">
+
                           <div>
+
                             <div className="flex items-center gap-2">
+
                               <span className="rounded-lg bg-purple-500/10 px-2 py-1 text-xs font-bold text-purple-400">
                                 GRUPO
                               </span>
@@ -2320,10 +2649,13 @@ export default function AdminPage() {
                                 }{" "}
                                 contas
                               </span>
+
                             </div>
 
                             <h4 className="mt-3 text-xl font-bold">
-                              {grupo.nome}
+                              {
+                                grupo.nome
+                              }
                             </h4>
 
                             <p className="mt-1 text-xs text-slate-500">
@@ -2332,9 +2664,11 @@ export default function AdminPage() {
                                 ? `@${principal.username_tiktok}`
                                 : "—"}
                             </p>
+
                           </div>
 
                           <div className="text-right">
+
                             <p className="text-xs text-slate-500">
                               Consolidado
                             </p>
@@ -2345,10 +2679,38 @@ export default function AdminPage() {
                                 diamantes
                               )}
                             </p>
+
                           </div>
+
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-3 gap-2">
+
+                          <MiniStat
+                            label="Seguidores"
+                            value={formatarNumero(
+                              seguidores
+                            )}
+                          />
+
+                          <MiniStat
+                            label="Batalhas"
+                            value={formatarNumero(
+                              batalhas
+                            )}
+                          />
+
+                          <MiniStat
+                            label="Relatórios"
+                            value={formatarNumero(
+                              dados.length
+                            )}
+                          />
+
                         </div>
 
                         <div className="mt-5 space-y-2">
+
                           {membros.map(
                             (
                               membro
@@ -2359,7 +2721,9 @@ export default function AdminPage() {
                                 }
                                 className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5"
                               >
+
                                 <div className="flex items-center gap-2">
+
                                   <span className="text-sm">
                                     👤
                                   </span>
@@ -2370,6 +2734,7 @@ export default function AdminPage() {
                                       membro.username_tiktok
                                     }
                                   </span>
+
                                 </div>
 
                                 {membro.id ===
@@ -2378,12 +2743,15 @@ export default function AdminPage() {
                                     PRINCIPAL
                                   </span>
                                 )}
+
                               </div>
                             )
                           )}
+
                         </div>
 
                         <div className="mt-4 flex gap-2">
+
                           <button
                             onClick={() =>
                               abrirEditarGrupo(
@@ -2405,26 +2773,35 @@ export default function AdminPage() {
                           >
                             Excluir
                           </button>
+
                         </div>
+
                       </div>
                     );
                   }
                 )}
+
               </div>
             )}
+
           </div>
+
         </div>
 
         {/* IMPORTAÇÃO */}
 
         <div className="mb-8 overflow-hidden rounded-3xl border border-blue-500/20 bg-[#0b1224]">
+
           <div className="border-b border-slate-800 px-6 py-5">
+
             <div className="flex items-start gap-4">
+
               <div className="rounded-xl bg-blue-500/10 p-3 text-xl">
                 📥
               </div>
 
               <div>
+
                 <h3 className="text-xl font-bold">
                   Importar resultados
                 </h3>
@@ -2433,12 +2810,17 @@ export default function AdminPage() {
                   Envie o relatório exportado do TikTok.
                   O sistema identifica os criadores automaticamente.
                 </p>
+
               </div>
+
             </div>
+
           </div>
 
           <div className="p-6">
+
             <div className="mb-5">
+
               <label className="mb-2 block text-sm font-semibold text-slate-300">
                 Streamer deste relatório
               </label>
@@ -2457,12 +2839,15 @@ export default function AdminPage() {
                 }
                 className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 md:max-w-md"
               >
+
                 <option value="">
                   Selecione o streamer
                 </option>
 
                 {streamers.map(
-                  (streamer) => (
+                  (
+                    streamer
+                  ) => (
                     <option
                       key={
                         streamer.id
@@ -2478,32 +2863,45 @@ export default function AdminPage() {
                     </option>
                   )
                 )}
+
               </select>
 
               {streamerSelecionado &&
                 obterGrupoDoStreamer(
                   streamerSelecionado
                 ) && (
+
                   <div className="mt-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3">
+
                     <p className="text-xs font-semibold text-purple-400">
                       🔗 Conta agrupada
                     </p>
 
                     <p className="mt-1 text-xs text-slate-400">
-                      Este relatório será armazenado
-                      na conta selecionada e aparecerá
-                      também no consolidado do grupo{" "}
+
+                      Este relatório ficará
+                      vinculado à conta selecionada
+                      e também será considerado no
+                      consolidado do grupo{" "}
+
                       <strong className="text-slate-200">
+
                         {
                           obterGrupoDoStreamer(
                             streamerSelecionado
                           )?.nome
                         }
+
                       </strong>
+
                       .
+
                     </p>
+
                   </div>
+
                 )}
+
             </div>
 
             <label
@@ -2513,6 +2911,7 @@ export default function AdminPage() {
                   : "border-slate-700 bg-slate-900/50 hover:border-blue-500 hover:bg-slate-900"
               }`}
             >
+
               <span className="mb-4 text-5xl">
                 📊
               </span>
@@ -2541,6 +2940,7 @@ export default function AdminPage() {
                 onChange={(
                   event
                 ) => {
+
                   const file =
                     event.target
                       .files?.[0];
@@ -2557,56 +2957,75 @@ export default function AdminPage() {
                     "";
                 }}
               />
+
             </label>
 
             {arquivo && (
               <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+
                 <p className="text-xs text-slate-500">
                   Arquivo selecionado
                 </p>
 
                 <div className="mt-1 flex items-center gap-2">
+
                   <span>
                     📄
                   </span>
 
                   <span className="text-sm font-semibold text-white">
-                    {arquivo.name}
+                    {
+                      arquivo.name
+                    }
                   </span>
+
                 </div>
+
               </div>
             )}
 
             {mensagem && (
               <div className="mt-4 rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+
                 <p className="text-sm font-semibold text-green-400">
-                  ✓ {mensagem}
+                  ✓{" "}
+                  {mensagem}
                 </p>
+
               </div>
             )}
 
             {erro && (
               <div className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
+
                 <p className="text-sm font-semibold text-red-400">
-                  ✕ {erro}
+                  ✕{" "}
+                  {erro}
                 </p>
+
               </div>
             )}
 
             <p className="mt-4 text-xs text-slate-500">
-              Os dados importados continuam armazenados
-              no Supabase.
+              Os dados importados continuam armazenados no Supabase.
             </p>
+
           </div>
+
         </div>
 
         {/* CRIADORES */}
 
         <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
+
           <div className="border-b border-slate-800 px-6 py-5">
+
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
               <div>
+
                 <div className="flex items-center gap-3">
+
                   <h3 className="text-xl font-bold">
                     👥 Criadores
                   </h3>
@@ -2616,17 +3035,20 @@ export default function AdminPage() {
                       resultadosFiltrados.length
                     }
                   </span>
+
                 </div>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  Clique em um criador para visualizar
-                  os dados disponíveis.
+                  Clique em um criador para visualizar os dados disponíveis.
                 </p>
+
               </div>
 
               <input
                 type="text"
-                value={busca}
+                value={
+                  busca
+                }
                 onChange={(
                   event
                 ) =>
@@ -2638,22 +3060,30 @@ export default function AdminPage() {
                 placeholder="Pesquisar criador ou streamer..."
                 className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500 lg:w-80"
               />
+
             </div>
+
           </div>
 
           {loadingResultados ? (
+
             <div className="p-12 text-center">
-              <div className="mb-3 text-3xl animate-pulse">
+
+              <div className="mb-3 animate-pulse text-3xl">
                 ⚡
               </div>
 
               <p className="text-slate-400">
                 Carregando resultados...
               </p>
+
             </div>
+
           ) : resultadosFiltrados.length ===
             0 ? (
+
             <div className="p-12 text-center">
+
               <div className="mb-3 text-4xl">
                 📊
               </div>
@@ -2665,12 +3095,19 @@ export default function AdminPage() {
               <p className="mt-1 text-sm text-slate-500">
                 Importe um relatório para começar.
               </p>
+
             </div>
+
           ) : (
+
             <div className="overflow-x-auto">
+
               <table className="w-full min-w-[1050px]">
+
                 <thead>
+
                   <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+
                     <th className="px-6 py-4">
                       Criador
                     </th>
@@ -2702,14 +3139,18 @@ export default function AdminPage() {
                     <th className="px-6 py-4 text-right">
                       Ação
                     </th>
+
                   </tr>
+
                 </thead>
 
                 <tbody>
+
                   {resultadosFiltrados.map(
                     (
                       resultado
                     ) => {
+
                       const grupo =
                         obterGrupoDoStreamer(
                           resultado.streamer_id
@@ -2720,10 +3161,14 @@ export default function AdminPage() {
                           key={`${resultado.streamer_id}-${resultado.criador_id}`}
                           className="border-b border-slate-800/70 transition hover:bg-slate-900/50"
                         >
+
                           <td className="px-6 py-5">
+
                             <p className="font-semibold text-white">
-                              {resultado.nome_criador ||
-                                "Criador sem nome"}
+                              {
+                                resultado.nome_criador ||
+                                "Criador sem nome"
+                              }
                             </p>
 
                             <p className="mt-1 text-xs text-slate-500">
@@ -2732,62 +3177,90 @@ export default function AdminPage() {
                                 resultado.criador_id
                               }
                             </p>
+
                           </td>
 
                           <td className="px-6 py-5">
+
                             <p className="text-sm font-semibold text-slate-300">
-                              {nomeStreamer(
-                                resultado.streamer_id
-                              )}
+                              {
+                                nomeStreamer(
+                                  resultado.streamer_id
+                                )
+                              }
                             </p>
+
                           </td>
 
                           <td className="px-6 py-5">
+
                             {grupo ? (
+
                               <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-400">
                                 🔗{" "}
                                 {
                                   grupo.nome
                                 }
                               </span>
+
                             ) : (
+
                               <span className="text-sm text-slate-500">
                                 —
                               </span>
+
                             )}
+
                           </td>
 
                           <td className="px-6 py-5">
+
                             <span className="font-bold text-purple-400">
-                              {formatarNumero(
-                                resultado.diamantes
-                              )}
+                              {
+                                formatarNumero(
+                                  resultado.diamantes
+                                )
+                              }
                             </span>
+
                           </td>
 
                           <td className="px-6 py-5">
+
                             <span className="font-semibold text-green-400">
                               +
-                              {formatarNumero(
-                                resultado.novos_seguidores
-                              )}
+                              {
+                                formatarNumero(
+                                  resultado.novos_seguidores
+                                )
+                              }
                             </span>
+
                           </td>
 
                           <td className="px-6 py-5 text-sm text-slate-300">
-                            {formatarNumero(
-                              resultado.batalhas
-                            )}
+
+                            {
+                              formatarNumero(
+                                resultado.batalhas
+                              )
+                            }
+
                           </td>
 
                           <td className="px-6 py-5">
+
                             <span className="rounded-full bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
-                              {resultado.status ||
-                                "Importado"}
+                              {
+                                resultado.status ||
+                                "Importado"
+                              }
                             </span>
+
                           </td>
 
                           <td className="px-6 py-5 text-right">
+
                             <button
                               onClick={() =>
                                 setResultadoSelecionado(
@@ -2798,16 +3271,24 @@ export default function AdminPage() {
                             >
                               Ver detalhes →
                             </button>
+
                           </td>
+
                         </tr>
                       );
                     }
                   )}
+
                 </tbody>
+
               </table>
+
             </div>
+
           )}
+
         </div>
+
       </section>
 
       {/* ========================================================
@@ -2815,6 +3296,7 @@ export default function AdminPage() {
           ======================================================== */}
 
       {mostrarAgrupamento && (
+
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
           onClick={() =>
@@ -2823,6 +3305,7 @@ export default function AdminPage() {
             )
           }
         >
+
           <div
             className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-purple-500/20 bg-[#0b1224] shadow-2xl"
             onClick={(
@@ -2831,26 +3314,33 @@ export default function AdminPage() {
               event.stopPropagation()
             }
           >
+
             <div className="border-b border-slate-800 p-6">
+
               <div className="flex items-start justify-between gap-4">
+
                 <div>
+
                   <p className="text-xs font-bold uppercase tracking-widest text-purple-400">
                     Administração
                   </p>
 
                   <h2 className="mt-1 text-2xl font-bold">
                     🔗{" "}
-                    {grupoSelecionado
-                      ? "Editar agrupamento"
-                      : "Agrupar contas"}
+                    {
+                      grupoSelecionado
+                        ? "Editar agrupamento"
+                        : "Agrupar contas"
+                    }
                   </h2>
 
                   <p className="mt-2 text-sm leading-6 text-slate-400">
-                    Selecione as contas que pertencem ao
-                    mesmo streamer. Os dados continuam
+                    Selecione as contas que pertencem
+                    ao mesmo streamer. Os dados continuam
                     separados no banco, mas serão
                     consolidados nos painéis.
                   </p>
+
                 </div>
 
                 <button
@@ -2863,19 +3353,25 @@ export default function AdminPage() {
                 >
                   ✕
                 </button>
+
               </div>
+
             </div>
 
             <div className="space-y-6 p-6">
+
               {/* NOME */}
 
               <div>
+
                 <label className="mb-2 block text-sm font-semibold text-slate-300">
                   Nome do grupo
                 </label>
 
                 <input
-                  value={nomeGrupo}
+                  value={
+                    nomeGrupo
+                  }
                   onChange={(
                     event
                   ) =>
@@ -2887,11 +3383,13 @@ export default function AdminPage() {
                   placeholder="Ex.: João Silva"
                   className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-purple-500"
                 />
+
               </div>
 
               {/* PRINCIPAL */}
 
               <div>
+
                 <label className="mb-2 block text-sm font-semibold text-slate-300">
                   Conta principal
                 </label>
@@ -2910,6 +3408,7 @@ export default function AdminPage() {
                   }
                   className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white outline-none focus:border-purple-500"
                 >
+
                   <option value="">
                     Selecione a conta principal
                   </option>
@@ -2918,6 +3417,7 @@ export default function AdminPage() {
                     (
                       streamer
                     ) => (
+
                       <option
                         key={
                           streamer.id
@@ -2931,38 +3431,45 @@ export default function AdminPage() {
                           streamer.username_tiktok
                         }
                       </option>
+
                     )
                   )}
+
                 </select>
 
                 <p className="mt-2 text-xs text-slate-500">
                   Essa será a conta-base usada para
-                  identificar o grupo.
+                  identificar o grupo nos painéis.
                 </p>
+
               </div>
 
               {/* CONTAS */}
 
               <div>
+
                 <div className="mb-3 flex items-center justify-between">
+
                   <label className="text-sm font-semibold text-slate-300">
                     Contas que pertencem ao grupo
                   </label>
 
                   <span className="text-xs text-slate-500">
                     {
-                      membrosSelecionados
-                        .length
+                      membrosSelecionados.length
                     }{" "}
                     selecionada(s)
                   </span>
+
                 </div>
 
                 <div className="space-y-2">
+
                   {streamers.map(
                     (
                       streamer
                     ) => {
+
                       const marcado =
                         membrosSelecionados.includes(
                           streamer.id
@@ -2976,6 +3483,7 @@ export default function AdminPage() {
                         );
 
                       return (
+
                         <button
                           type="button"
                           key={
@@ -2992,7 +3500,9 @@ export default function AdminPage() {
                               : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
                           }`}
                         >
+
                           <div className="flex items-center gap-3">
+
                             <div
                               className={`flex h-10 w-10 items-center justify-center rounded-xl ${
                                 marcado
@@ -3000,12 +3510,15 @@ export default function AdminPage() {
                                   : "bg-slate-800"
                               }`}
                             >
-                              {marcado
-                                ? "✓"
-                                : "👤"}
+                              {
+                                marcado
+                                  ? "✓"
+                                  : "👤"
+                              }
                             </div>
 
                             <div>
+
                               <p className="font-semibold">
                                 @
                                 {
@@ -3018,48 +3531,66 @@ export default function AdminPage() {
                                   streamer.email
                                 }
                               </p>
+
                             </div>
+
                           </div>
 
                           <div className="text-right">
-                            {principalSelecionado ===
-                              streamer.id && (
-                              <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-400">
-                                PRINCIPAL
-                              </span>
-                            )}
 
-                            {!principalSelecionado ||
-                            principalSelecionado !==
-                              streamer.id ? (
-                              outroGrupo &&
-                              outroGrupo.id !==
-                                grupoSelecionado?.id ? (
-                                <p className="mt-1 text-[10px] text-amber-400">
-                                  Já está em{" "}
-                                  {
-                                    outroGrupo.nome
-                                  }
-                                </p>
-                              ) : null
-                            ) : null}
+                            {
+                              principalSelecionado ===
+                                streamer.id && (
+
+                                <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-400">
+                                  PRINCIPAL
+                                </span>
+
+                              )
+                            }
+
+                            {
+                              (!principalSelecionado ||
+                                principalSelecionado !==
+                                  streamer.id) &&
+                                outroGrupo &&
+                                outroGrupo.id !==
+                                  grupoSelecionado?.id && (
+
+                                  <p className="mt-1 text-[10px] text-amber-400">
+                                    Já está em{" "}
+                                    {
+                                      outroGrupo.nome
+                                    }
+                                  </p>
+
+                                )
+                            }
+
                           </div>
+
                         </button>
+
                       );
                     }
                   )}
+
                 </div>
+
               </div>
 
               {/* SENHA */}
 
               <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5">
+
                 <div className="flex items-start gap-3">
+
                   <div className="text-xl">
                     🔐
                   </div>
 
                   <div className="flex-1">
+
                     <p className="font-bold text-amber-300">
                       Confirmação administrativa
                     </p>
@@ -3085,17 +3616,25 @@ export default function AdminPage() {
                       placeholder="Senha administrativa"
                       className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-amber-500"
                     />
+
                   </div>
+
                 </div>
+
               </div>
 
               {erro && (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                  {erro}
+
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm leading-5 text-red-300">
+                  {
+                    erro
+                  }
                 </div>
+
               )}
 
               <div className="flex gap-3">
+
                 <button
                   onClick={() =>
                     setMostrarAgrupamento(
@@ -3116,16 +3655,23 @@ export default function AdminPage() {
                   }
                   className="flex-1 rounded-xl bg-purple-600 px-5 py-3 font-bold text-white transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {agrupando
-                    ? "Salvando..."
-                    : grupoSelecionado
-                    ? "Salvar alterações"
-                    : "Criar agrupamento"}
+                  {
+                    agrupando
+                      ? "Salvando..."
+                      : grupoSelecionado
+                      ? "Salvar alterações"
+                      : "Criar agrupamento"
+                  }
                 </button>
+
               </div>
+
             </div>
+
           </div>
+
         </div>
+
       )}
 
       {/* ========================================================
@@ -3133,6 +3679,7 @@ export default function AdminPage() {
           ======================================================== */}
 
       {resultadoSelecionado && (
+
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
           onClick={() =>
@@ -3141,6 +3688,7 @@ export default function AdminPage() {
             )
           }
         >
+
           <div
             className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-700 bg-[#0b1224] shadow-2xl"
             onClick={(
@@ -3149,15 +3697,20 @@ export default function AdminPage() {
               event.stopPropagation()
             }
           >
+
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-[#0b1224]/95 px-6 py-5 backdrop-blur">
+
               <div>
+
                 <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">
                   Detalhes do criador
                 </p>
 
                 <h2 className="mt-1 text-2xl font-bold">
-                  {resultadoSelecionado.nome_criador ||
-                    "Criador sem nome"}
+                  {
+                    resultadoSelecionado.nome_criador ||
+                    "Criador sem nome"
+                  }
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
@@ -3166,6 +3719,7 @@ export default function AdminPage() {
                     resultadoSelecionado.criador_id
                   }
                 </p>
+
               </div>
 
               <button
@@ -3178,17 +3732,21 @@ export default function AdminPage() {
               >
                 ✕
               </button>
+
             </div>
 
             <div className="space-y-6 p-6">
+
               {/* DESEMPENHO */}
 
               <div>
+
                 <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
                   Desempenho
                 </h3>
 
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
                   <InfoCard
                     titulo="Diamantes"
                     valor={formatarNumero(
@@ -3220,17 +3778,21 @@ export default function AdminPage() {
                     )}
                     accent="white"
                   />
+
                 </div>
+
               </div>
 
               {/* INFORMAÇÕES */}
 
               <div>
+
                 <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
                   Informações do criador
                 </h3>
 
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
                   <Info
                     titulo="Nome"
                     valor={
@@ -3330,20 +3892,27 @@ export default function AdminPage() {
                       resultadoSelecionado.status
                     }
                   />
+
                 </div>
+
               </div>
 
               {/* DADOS ORIGINAIS */}
 
               {resultadoSelecionado.dados_completos && (
+
                 <div>
+
                   <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
                     Dados originais do relatório
                   </h3>
 
                   <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950">
+
                     <table className="w-full min-w-[600px]">
+
                       <tbody>
+
                         {Object.entries(
                           resultadoSelecionado.dados_completos
                         ).map(
@@ -3351,40 +3920,54 @@ export default function AdminPage() {
                             chave,
                             valor,
                           ]) => (
+
                             <tr
                               key={
                                 chave
                               }
                               className="border-b border-slate-800/70 last:border-0"
                             >
+
                               <td className="w-1/3 px-5 py-3 text-xs font-semibold text-slate-500">
-                                {chave}
+                                {
+                                  chave
+                                }
                               </td>
 
                               <td className="px-5 py-3 text-sm text-slate-200">
-                                {valor ===
-                                  null ||
-                                valor ===
-                                  undefined ||
-                                valor ===
-                                  ""
-                                  ? "—"
-                                  : String(
-                                      valor
-                                    )}
+                                {
+                                  valor ===
+                                    null ||
+                                  valor ===
+                                    undefined ||
+                                  valor ===
+                                    ""
+                                    ? "—"
+                                    : String(
+                                        valor
+                                      )
+                                }
                               </td>
+
                             </tr>
+
                           )
                         )}
+
                       </tbody>
+
                     </table>
+
                   </div>
+
                 </div>
+
               )}
 
               {/* DATAS */}
 
               <div className="grid gap-4 md:grid-cols-2">
+
                 <Info
                   titulo="Data da importação"
                   valor={formatarDataHora(
@@ -3398,10 +3981,13 @@ export default function AdminPage() {
                     resultadoSelecionado.updated_at
                   )}
                 />
+
               </div>
+
             </div>
 
             <div className="border-t border-slate-800 px-6 py-4 text-right">
+
               <button
                 onClick={() =>
                   setResultadoSelecionado(
@@ -3412,10 +3998,15 @@ export default function AdminPage() {
               >
                 Fechar
               </button>
+
             </div>
+
           </div>
+
         </div>
+
       )}
+
     </main>
   );
 }
@@ -3470,17 +4061,23 @@ function MetricCard({
   };
 
   const style =
-    accentClasses[accent];
+    accentClasses[
+      accent
+    ];
 
   return (
     <div
       className={`group rounded-3xl border ${style.glow} bg-[#0b1224] p-5 transition duration-300 hover:-translate-y-1 hover:bg-[#0f172a]`}
     >
+
       <div className="flex items-start justify-between">
+
         <div
           className={`flex h-11 w-11 items-center justify-center rounded-2xl ${style.bg} text-xl`}
         >
-          {icon}
+          {
+            icon
+          }
         </div>
 
         <span
@@ -3488,19 +4085,27 @@ function MetricCard({
         >
           LIVE
         </span>
+
       </div>
 
       <p className="mt-5 text-sm text-slate-500">
-        {title}
+        {
+          title
+        }
       </p>
 
       <p className="mt-1 text-3xl font-bold tracking-tight">
-        {value}
+        {
+          value
+        }
       </p>
 
       <p className="mt-2 text-xs text-slate-600">
-        {subtitle}
+        {
+          subtitle
+        }
       </p>
+
     </div>
   );
 }
@@ -3521,17 +4126,27 @@ function ComparisonCard({
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+
       <div className="flex items-start justify-between gap-3">
+
         <div>
+
           <p className="text-sm font-semibold text-slate-300">
-            {title}
+            {
+              title
+            }
           </p>
 
           <p className="mt-3 text-3xl font-bold">
-            {new Intl.NumberFormat(
-              "pt-BR"
-            ).format(current)}
+            {
+              new Intl.NumberFormat(
+                "pt-BR"
+              ).format(
+                current
+              )
+            }
           </p>
+
         </div>
 
         <span
@@ -3541,29 +4156,41 @@ function ComparisonCard({
               : "bg-red-500/10 text-red-400"
           }`}
         >
-          {positivo
-            ? "↑"
-            : "↓"}{" "}
-          {Math.abs(
-            variation
-          ).toFixed(1)}
+          {
+            positivo
+              ? "↑"
+              : "↓"
+          }{" "}
+          {
+            Math.abs(
+              variation
+            ).toFixed(1)
+          }
           %
         </span>
+
       </div>
 
       <div className="mt-4 flex items-center justify-between text-xs">
+
         <span className="text-slate-500">
           Mês anterior
         </span>
 
         <span className="font-semibold text-slate-300">
-          {new Intl.NumberFormat(
-            "pt-BR"
-          ).format(previous)}
+          {
+            new Intl.NumberFormat(
+              "pt-BR"
+            ).format(
+              previous
+            )
+          }
         </span>
+
       </div>
 
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+
         <div
           className={`h-full rounded-full ${
             positivo
@@ -3582,7 +4209,9 @@ function ComparisonCard({
             )}%`,
           }}
         />
+
       </div>
+
     </div>
   );
 }
@@ -3598,21 +4227,59 @@ function SummaryRow({
 }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3">
+
       <div className="flex items-center gap-3">
+
         <span className="text-lg">
-          {icon}
+          {
+            icon
+          }
         </span>
 
         <span className="text-sm text-slate-400">
-          {label}
+          {
+            label
+          }
         </span>
+
       </div>
 
       <span className="font-bold">
-        {new Intl.NumberFormat(
-          "pt-BR"
-        ).format(value)}
+        {
+          new Intl.NumberFormat(
+            "pt-BR"
+          ).format(
+            value
+          )
+        }
       </span>
+
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+
+      <p className="text-[10px] uppercase tracking-wide text-slate-500">
+        {
+          label
+        }
+      </p>
+
+      <p className="mt-1 text-sm font-bold text-slate-200">
+        {
+          value
+        }
+      </p>
+
     </div>
   );
 }
@@ -3633,25 +4300,34 @@ function InfoCard({
   const classes = {
     purple:
       "text-purple-400",
+
     green:
       "text-green-400",
+
     blue:
       "text-blue-400",
+
     white:
       "text-white",
   };
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+
       <p className="text-xs text-slate-500">
-        {titulo}
+        {
+          titulo
+        }
       </p>
 
       <p
         className={`mt-2 text-2xl font-bold ${classes[accent]}`}
       >
-        {valor}
+        {
+          valor
+        }
       </p>
+
     </div>
   );
 }
@@ -3665,17 +4341,30 @@ function Info({
 }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+
       <p className="text-xs font-medium text-slate-500">
-        {titulo}
+        {
+          titulo
+        }
       </p>
 
       <p className="mt-2 break-words text-sm font-semibold text-slate-200">
-        {valor === null ||
-        valor === undefined ||
-        valor === ""
-          ? "—"
-          : String(valor)}
+
+        {
+          valor ===
+            null ||
+          valor ===
+            undefined ||
+          valor ===
+            ""
+            ? "—"
+            : String(
+                valor
+              )
+        }
+
       </p>
+
     </div>
   );
 }
