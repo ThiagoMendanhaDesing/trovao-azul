@@ -129,6 +129,12 @@ export default function AdminPage() {
   const [paginaContaPrincipal, setPaginaContaPrincipal] = useState(1);
   const [agrupamentoExpandido, setAgrupamentoExpandido] = useState(true);
 
+  // Gavetas independentes para organizar as listas de criadores.
+  // A lista ativa começa aberta; as listas de saída e arquivo começam recolhidas.
+  const [criadoresAtivosExpandido, setCriadoresAtivosExpandido] = useState(true);
+  const [criadoresSaiuExpandido, setCriadoresSaiuExpandido] = useState(false);
+  const [criadoresArquivadosExpandido, setCriadoresArquivadosExpandido] = useState(false);
+
   const [senhaAgrupamento, setSenhaAgrupamento] =
     useState("");
 
@@ -3362,88 +3368,153 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* CRIADORES ATIVOS / IMPORTADOS */}
-        <div className="mb-8 overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
-          <div className="border-b border-slate-800 px-6 py-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
+        {/* PESQUISA GLOBAL DAS TRÊS GAVETAS */}
+        <div className="mb-4 rounded-2xl border border-slate-800 bg-[#0b1224] p-5">
+          <label htmlFor="busca-criadores-listas" className="mb-2 block text-sm font-semibold text-slate-200">
+            🔎 Pesquisar nas listas de criadores
+          </label>
+          <input
+            id="busca-criadores-listas"
+            type="text"
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Pesquisar por nome, usuário TikTok, ID ou status..."
+            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
+          />
+          <p className="mt-2 text-xs text-slate-500">
+            A pesquisa filtra as três gavetas. Cada lista mostra 20 criadores por página.
+          </p>
+        </div>
+
+        {/* CRIADORES ATIVOS / IMPORTADOS — GAVETA */}
+        <div className="mb-4 overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
+          <button
+            type="button"
+            onClick={() => setCriadoresAtivosExpandido((aberto) => !aberto)}
+            aria-expanded={criadoresAtivosExpandido}
+            aria-controls="painel-criadores-ativos"
+            className="w-full border-b border-slate-800 px-6 py-5 text-left transition hover:bg-slate-900/60"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-xl font-bold">👥 Criadores ativos / importados</h3>
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
                     {formatarNumero(criadoresAtivosFiltrados.length)}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-slate-400">
-                  Criadores que não estão marcados como “Saiu”. Mostrando até 20 por página.
+                  Criadores que não estão marcados como “Saiu”.
                 </p>
               </div>
-              <input
-                type="text"
-                value={busca}
-                onChange={(event) => setBusca(event.target.value)}
-                placeholder="Pesquisar criador, usuário ou ID..."
-                className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500 lg:w-80"
-              />
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="hidden rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400 sm:inline-flex">
+                  20 por página
+                </span>
+                <span aria-hidden="true" className={`flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 text-xl text-slate-300 transition ${criadoresAtivosExpandido ? "rotate-180 bg-blue-500/10" : ""}`}>
+                  ⌄
+                </span>
+              </div>
             </div>
-          </div>
-          {renderTabelaCriadores(
-            criadoresAtivosPaginados,
-            paginaCriadoresAtivos,
-            totalPaginasAtivos,
-            setPaginaCriadoresAtivos,
-            "Nenhum criador ativo/importado encontrado."
+          </button>
+          {criadoresAtivosExpandido && (
+            <div id="painel-criadores-ativos">
+              {renderTabelaCriadores(
+                criadoresAtivosPaginados,
+                paginaCriadoresAtivos,
+                totalPaginasAtivos,
+                setPaginaCriadoresAtivos,
+                "Nenhum criador ativo/importado encontrado."
+              )}
+            </div>
           )}
         </div>
 
-        {/* CRIADORES QUE SAÍRAM */}
-        <div className="overflow-hidden rounded-3xl border border-amber-500/20 bg-[#0b1224]">
-          <div className="border-b border-slate-800 px-6 py-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
+        {/* CRIADORES QUE SAÍRAM — GAVETA */}
+        <div className="mb-4 overflow-hidden rounded-3xl border border-amber-500/20 bg-[#0b1224]">
+          <button
+            type="button"
+            onClick={() => setCriadoresSaiuExpandido((aberto) => !aberto)}
+            aria-expanded={criadoresSaiuExpandido}
+            aria-controls="painel-criadores-sairam"
+            className="w-full border-b border-slate-800 px-6 py-5 text-left transition hover:bg-slate-900/60"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-xl font-bold">↗ Criadores que saíram da agência</h3>
                   <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300">
                     {formatarNumero(criadoresSaiuFiltrados.length)}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-slate-400">
-                  Registros com status “Saiu”, separados para facilitar a organização. A busca acima filtra as duas tabelas.
+                  Registros com status “Saiu”, separados para facilitar a organização.
                 </p>
               </div>
-              <span className="whitespace-nowrap rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400">
-                20 pessoas por página
-              </span>
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="hidden rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400 sm:inline-flex">
+                  20 por página
+                </span>
+                <span aria-hidden="true" className={`flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 text-xl text-slate-300 transition ${criadoresSaiuExpandido ? "rotate-180 bg-amber-500/10" : ""}`}>
+                  ⌄
+                </span>
+              </div>
             </div>
-          </div>
-          {renderTabelaCriadores(
-            criadoresSaiuPaginados,
-            paginaCriadoresSaiu,
-            totalPaginasSaiu,
-            setPaginaCriadoresSaiu,
-            "Nenhum criador marcado como saiu."
+          </button>
+          {criadoresSaiuExpandido && (
+            <div id="painel-criadores-sairam">
+              {renderTabelaCriadores(
+                criadoresSaiuPaginados,
+                paginaCriadoresSaiu,
+                totalPaginasSaiu,
+                setPaginaCriadoresSaiu,
+                "Nenhum criador marcado como saiu."
+              )}
+            </div>
           )}
         </div>
 
-        {/* CRIADORES ARQUIVADOS */}
-        <div className="mt-8 overflow-hidden rounded-3xl border border-slate-700 bg-[#0b1224]">
-          <div className="border-b border-slate-800 px-6 py-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
+        {/* CRIADORES ARQUIVADOS — GAVETA */}
+        <div className="mb-8 overflow-hidden rounded-3xl border border-slate-700 bg-[#0b1224]">
+          <button
+            type="button"
+            onClick={() => setCriadoresArquivadosExpandido((aberto) => !aberto)}
+            aria-expanded={criadoresArquivadosExpandido}
+            aria-controls="painel-criadores-arquivados"
+            className="w-full border-b border-slate-800 px-6 py-5 text-left transition hover:bg-slate-900/60"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-xl font-bold">📦 Criadores arquivados</h3>
-                  <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-300">{formatarNumero(criadoresArquivadosFiltrados.length)}</span>
+                  <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-300">
+                    {formatarNumero(criadoresArquivadosFiltrados.length)}
+                  </span>
                 </div>
-                <p className="mt-1 text-sm text-slate-400">Arquivados automaticamente após 30 dias sem atividade ou por ação manual. Selecione e clique em “Reativar selecionados” para trazer de volta.</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  Arquivados automaticamente após 30 dias sem atividade ou por ação manual. Os registros podem ser restaurados.
+                </p>
               </div>
-              <span className="whitespace-nowrap rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400">20 pessoas por página</span>
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="hidden rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400 sm:inline-flex">
+                  20 por página
+                </span>
+                <span aria-hidden="true" className={`flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 text-xl text-slate-300 transition ${criadoresArquivadosExpandido ? "rotate-180 bg-slate-500/10" : ""}`}>
+                  ⌄
+                </span>
+              </div>
             </div>
-          </div>
-          {renderTabelaCriadores(
-            criadoresArquivadosPaginados,
-            paginaCriadoresArquivados,
-            totalPaginasArquivados,
-            setPaginaCriadoresArquivados,
-            "Nenhum criador arquivado."
+          </button>
+          {criadoresArquivadosExpandido && (
+            <div id="painel-criadores-arquivados">
+              {renderTabelaCriadores(
+                criadoresArquivadosPaginados,
+                paginaCriadoresArquivados,
+                totalPaginasArquivados,
+                setPaginaCriadoresArquivados,
+                "Nenhum criador arquivado."
+              )}
+            </div>
           )}
         </div>
 
