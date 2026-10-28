@@ -46,12 +46,25 @@ type ImportResultado = Omit<
   data_importacao: string;
 };
 
+/** Agrupamento persistido para os criadores importados do relatório. */
 type StreamerGroup = {
   id: string;
   nome: string;
-  streamer_principal_id: string;
+  streamer_principal_id: string; // chave composta do criador principal
   created_at: string;
-  memberIds: string[];
+  memberIds: string[]; // chaves compostas dos criadores membros
+};
+
+type CreatorManagement = {
+  creator_key: string;
+  streamer_id: string;
+  criador_id: string;
+  inactive_since: string | null;
+  last_active_at: string | null;
+  archived_at: string | null;
+  manual_archived: boolean;
+  archive_reason: string | null;
+  updated_at?: string;
 };
 
 type MonthlyData = {
@@ -85,6 +98,9 @@ export default function AdminPage() {
   const [busca, setBusca] = useState("");
   const [paginaCriadoresAtivos, setPaginaCriadoresAtivos] = useState(1);
   const [paginaCriadoresSaiu, setPaginaCriadoresSaiu] = useState(1);
+  const [paginaCriadoresArquivados, setPaginaCriadoresArquivados] = useState(1);
+  const [selecionadosCriadores, setSelecionadosCriadores] = useState<string[]>([]);
+  const [gestaoCriadores, setGestaoCriadores] = useState<CreatorManagement[]>([]);
   const [resultadoSelecionado, setResultadoSelecionado] =
     useState<Resultado | null>(null);
 
@@ -105,6 +121,8 @@ export default function AdminPage() {
 
   const [membrosSelecionados, setMembrosSelecionados] =
     useState<string[]>([]);
+
+  const [buscaAgrupamento, setBuscaAgrupamento] = useState("");
 
   const [senhaAgrupamento, setSenhaAgrupamento] =
     useState("");
@@ -133,7 +151,8 @@ export default function AdminPage() {
   useEffect(() => {
     setPaginaCriadoresAtivos(1);
     setPaginaCriadoresSaiu(1);
-  }, [busca, resultados]);
+    setPaginaCriadoresArquivados(1);
+  }, [busca, resultados, gestaoCriadores]);
 
   useEffect(() => {
     setAgora(new Date());
@@ -191,11 +210,22 @@ export default function AdminPage() {
     setErro("");
 
     try {
-      await Promise.all([
+      const [, resultadosCarregados, , gestaoCarregada] = await Promise.all([
         carregarStreamers(),
         carregarResultados(),
         carregarGrupos(),
+        carregarGestaoCriadores(),
       ]);
+
+      if (resultadosCarregados) {
+        await inicializarGestaoDosCriadores(
+          resultadosCarregados,
+          gestaoCarregada || []
+        );
+        const gestaoAtualizada = await carregarGestaoCriadores();
+        await arquivarInativosAutomaticamente(gestaoAtualizada || []);
+        await carregarGestaoCriadores();
+      }
 
       setUltimaAtualizacao(
         new Date().toLocaleString("pt-BR")
@@ -306,17 +336,18 @@ export default function AdminPage() {
 
       // Ignora apenas o registro legado cujo criador_id é uma mensagem de status,
       // não um ID real. Não removemos nem alteramos dados no Supabase.
-      setResultados(
-        todosResultados.filter((resultado) => {
-          const idNormalizado = String(resultado.criador_id ?? "")
-            .trim()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase();
+      const resultadosFiltrados = todosResultados.filter((resultado) => {
+        const idNormalizado = String(resultado.criador_id ?? "")
+          .trim()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase();
 
-          return idNormalizado !== "o criador deixou a agencia";
-        })
-      );
+        return idNormalizado !== "o criador deixou a agencia";
+      });
+
+      setResultados(resultadosFiltrados);
+      return resultadosFiltrados;
     } finally {
       setLoadingResultados(false);
     }
@@ -329,75 +360,58 @@ export default function AdminPage() {
    */
 
   async function carregarGrupos() {
-    const {
-      data: groups,
-      error: groupError,
-    } = await supabase
-      .from("streamer_groups")
-      .select(
-        "id, nome, streamer_principal_id, created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      });
+    const { data: groups, error: groupError } = await supabase
+      .from("criador_grupos")
+      .select("id, nome, principal_creator_key, created_at")
+      .order("created_at", { ascending: false });
 
     if (groupError) {
-      console.error(
-        "Erro ao carregar grupos:",
-        groupError
-      );
-
-      setErro(
-        `Erro ao carregar grupos: ${groupError.message}`
-      );
-
-      return;
+      console.error("Erro ao carregar grupos de criadores:", groupError);
+      setErro(`Erro ao carregar grupos de criadores: ${groupError.message}. Execute o arquivo SQL de configuração antes de usar esta função.`);
+      setGrupos([]);
+      return [] as StreamerGroup[];
     }
 
-    const {
-      data: members,
-      error: memberError,
-    } = await supabase
-      .from("streamer_group_members")
-      .select(
-        "group_id, streamer_id"
-      );
+    const { data: members, error: memberError } = await supabase
+      .from("criador_grupo_membros")
+      .select("group_id, creator_key");
 
     if (memberError) {
-      console.error(
-        "Erro ao carregar membros dos grupos:",
-        memberError
-      );
-
-      setErro(
-        `Erro ao carregar membros dos grupos: ${memberError.message}`
-      );
-
-      return;
+      console.error("Erro ao carregar membros dos grupos:", memberError);
+      setErro(`Erro ao carregar membros dos grupos: ${memberError.message}`);
+      setGrupos([]);
+      return [] as StreamerGroup[];
     }
 
-    const gruposMontados: StreamerGroup[] =
-      (groups || []).map((group) => ({
-        id: group.id,
-        nome: group.nome,
-        streamer_principal_id:
-          group.streamer_principal_id,
-        created_at: group.created_at,
-
-        memberIds:
-          (members || [])
-            .filter(
-              (member) =>
-                member.group_id ===
-                group.id
-            )
-            .map(
-              (member) =>
-                member.streamer_id
-            ),
-      }));
+    const gruposMontados: StreamerGroup[] = (groups || []).map((group: any) => ({
+      id: group.id,
+      nome: group.nome,
+      streamer_principal_id: group.principal_creator_key,
+      created_at: group.created_at,
+      memberIds: (members || [])
+        .filter((member: any) => member.group_id === group.id)
+        .map((member: any) => member.creator_key),
+    }));
 
     setGrupos(gruposMontados);
+    return gruposMontados;
+  }
+
+  async function carregarGestaoCriadores(): Promise<CreatorManagement[]> {
+    const { data, error } = await supabase
+      .from("criador_gestao")
+      .select("creator_key, streamer_id, criador_id, inactive_since, last_active_at, archived_at, manual_archived, archive_reason, updated_at");
+
+    if (error) {
+      console.error("Erro ao carregar gestão de criadores:", error);
+      setErro(`Erro ao carregar gestão de criadores: ${error.message}. Execute o arquivo SQL de configuração antes de usar arquivamento automático.`);
+      setGestaoCriadores([]);
+      return [];
+    }
+
+    const lista = (data || []) as CreatorManagement[];
+    setGestaoCriadores(lista);
+    return lista;
   }
 
   /*
@@ -711,15 +725,8 @@ export default function AdminPage() {
     );
   }
 
-  function obterGrupoDoStreamer(
-    streamerId: string
-  ) {
-    return grupos.find(
-      (grupo) =>
-        grupo.memberIds.includes(
-          streamerId
-        )
-    );
+  function obterGrupoDoCriador(creatorKey: string) {
+    return grupos.find((grupo) => grupo.memberIds.includes(creatorKey));
   }
 
   function normalizarUsername(
@@ -729,6 +736,188 @@ export default function AdminPage() {
       .trim()
       .replace(/^@+/, "")
       .toLowerCase();
+  }
+
+  /** Identidade estável de um criador dentro da agência/relatório. */
+  function chaveCriador(resultado: Pick<Resultado, "streamer_id" | "criador_id">): string {
+    return `${resultado.streamer_id}::${resultado.criador_id}`;
+  }
+
+  function obterCriadorPorChave(creatorKey: string): Resultado | undefined {
+    return resultados.find((resultado) => chaveCriador(resultado) === creatorKey);
+  }
+
+  function obterGestaoDoCriador(creatorKey: string): CreatorManagement | undefined {
+    return gestaoCriadores.find((item) => item.creator_key === creatorKey);
+  }
+
+  function criadorEstaArquivado(resultado: Resultado): boolean {
+    return Boolean(obterGestaoDoCriador(chaveCriador(resultado))?.archived_at);
+  }
+
+  function criadorTemAtividade(resultado: Resultado): boolean {
+    return (
+      (Number(resultado.diamantes) || 0) > 0 ||
+      (Number(resultado.duracao_live) || 0) > 0 ||
+      (Number(resultado.dias_validos_live) || 0) > 0 ||
+      (Number(resultado.transmissoes) || 0) > 0
+    );
+  }
+
+  function obterPeriodoRelatorio(resultado?: Resultado): { inicio: Date; fim: Date } | null {
+    if (!resultado) return null;
+    const dados = resultado.dados_completos || {};
+    const valorPeriodo = encontrarColuna(dados, [
+      "período dos dados",
+      "periodo dos dados",
+      "data do relatório",
+      "período",
+      "periodo",
+    ]);
+    const datas = String(valorPeriodo ?? "").match(/\d{4}-\d{2}-\d{2}/g);
+    if (datas && datas.length >= 2) {
+      const inicio = new Date(`${datas[0]}T12:00:00`);
+      const fim = new Date(`${datas[1]}T12:00:00`);
+      if (!Number.isNaN(inicio.getTime()) && !Number.isNaN(fim.getTime())) {
+        return { inicio, fim };
+      }
+    }
+    return null;
+  }
+
+  async function inicializarGestaoDosCriadores(
+    listaResultados: Resultado[],
+    gestaoExistente: CreatorManagement[]
+  ) {
+    const chavesExistentes = new Set(gestaoExistente.map((item) => item.creator_key));
+    const agoraIso = new Date().toISOString();
+    const novos = listaResultados
+      .filter((resultado) => !chavesExistentes.has(chaveCriador(resultado)))
+      .map((resultado) => {
+        const ativo = criadorTemAtividade(resultado);
+        const periodoRelatorio = obterPeriodoRelatorio(resultado);
+        const referencia = resultado.data_importacao || resultado.updated_at || agoraIso;
+        return {
+          creator_key: chaveCriador(resultado),
+          streamer_id: resultado.streamer_id,
+          criador_id: resultado.criador_id,
+          inactive_since: ativo ? null : (periodoRelatorio?.inicio.toISOString() || referencia),
+          last_active_at: ativo ? (periodoRelatorio?.fim.toISOString() || referencia) : null,
+          archived_at: null,
+          manual_archived: false,
+          archive_reason: null,
+          updated_at: agoraIso,
+        };
+      });
+
+    if (!novos.length) return;
+
+    const { error } = await supabase
+      .from("criador_gestao")
+      .upsert(novos, { onConflict: "creator_key", ignoreDuplicates: true });
+
+    if (error) {
+      console.error("Erro ao inicializar gestão de criadores:", error);
+      setErro(`Erro ao inicializar gestão dos criadores: ${error.message}`);
+    }
+  }
+
+  async function arquivarInativosAutomaticamente(listaGestao: CreatorManagement[]) {
+    const limite = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const vencidos = listaGestao.filter((item) =>
+      !item.manual_archived &&
+      !item.archived_at &&
+      Boolean(item.inactive_since) &&
+      new Date(item.inactive_since as string).getTime() <= limite
+    );
+
+    if (!vencidos.length) return;
+
+    const agoraIso = new Date().toISOString();
+    const { error } = await supabase
+      .from("criador_gestao")
+      .update({
+        archived_at: agoraIso,
+        archive_reason: "inatividade_30_dias",
+        updated_at: agoraIso,
+      })
+      .in("creator_key", vencidos.map((item) => item.creator_key))
+      .eq("manual_archived", false)
+      .is("archived_at", null);
+
+    if (error) {
+      console.error("Erro ao arquivar criadores inativos:", error);
+      setErro(`Erro ao arquivar criadores inativos: ${error.message}`);
+    }
+  }
+
+  async function atualizarGestaoAposImportacao(
+    importados: ImportResultado[],
+    resultadosAntesDaImportacao: Resultado[]
+  ) {
+    const { data: dadosGestao, error: erroGestao } = await supabase
+      .from("criador_gestao")
+      .select("creator_key, streamer_id, criador_id, inactive_since, last_active_at, archived_at, manual_archived, archive_reason, updated_at");
+
+    if (erroGestao) {
+      throw new Error(`Não consegui atualizar o controle de inatividade: ${erroGestao.message}. Confira se executou o SQL de configuração.`);
+    }
+
+    const existentes = new Map<string, CreatorManagement>(
+      ((dadosGestao || []) as CreatorManagement[]).map((item) => [item.creator_key, item])
+    );
+    const agoraIso = new Date().toISOString();
+    const periodoRelatorio = importados.length
+      ? obterPeriodoRelatorio(importados[0] as Resultado)
+      : null;
+    const inicioPeriodo = periodoRelatorio?.inicio.toISOString() || agoraIso;
+    const fimPeriodo = periodoRelatorio?.fim.toISOString() || agoraIso;
+    const chavesImportadas = new Set(importados.map((item) => chaveCriador(item)));
+    const porChave = new Map<string, any>();
+
+    for (const resultado of importados) {
+      const key = chaveCriador(resultado);
+      const anterior = existentes.get(key);
+      const ativo = criadorTemAtividade(resultado as Resultado);
+      porChave.set(key, {
+        creator_key: key,
+        streamer_id: resultado.streamer_id,
+        criador_id: resultado.criador_id,
+        inactive_since: ativo ? null : (anterior?.inactive_since || inicioPeriodo),
+        last_active_at: ativo ? fimPeriodo : (anterior?.last_active_at || null),
+        archived_at: ativo && !anterior?.manual_archived ? null : (anterior?.archived_at || null),
+        manual_archived: Boolean(anterior?.manual_archived),
+        archive_reason: ativo && !anterior?.manual_archived ? null : (anterior?.archive_reason || null),
+        updated_at: agoraIso,
+      });
+    }
+
+    // Se o criador sumiu completamente do novo relatório mensal, começa a contar
+    // inatividade a partir do início do período desse relatório.
+    for (const antigo of resultadosAntesDaImportacao) {
+      const key = chaveCriador(antigo);
+      if (chavesImportadas.has(key)) continue;
+      const anterior = existentes.get(key);
+      porChave.set(key, {
+        creator_key: key,
+        streamer_id: antigo.streamer_id,
+        criador_id: antigo.criador_id,
+        inactive_since: anterior?.inactive_since || inicioPeriodo,
+        last_active_at: anterior?.last_active_at || null,
+        archived_at: anterior?.archived_at || null,
+        manual_archived: Boolean(anterior?.manual_archived),
+        archive_reason: anterior?.archive_reason || null,
+        updated_at: agoraIso,
+      });
+    }
+
+    const updates = Array.from(porChave.values());
+    if (updates.length) {
+      const { error } = await supabase
+        .from("criador_gestao")
+        .upsert(updates, { onConflict: "creator_key" });
+      if (error) throw new Error(`Erro ao salvar status de atividade: ${error.message}`);
+    }
   }
 
   function obterUsernameTikTokResultado(
@@ -769,28 +958,8 @@ export default function AdminPage() {
     );
   }
 
-  function obterGrupoDoResultado(
-    resultado: Resultado
-  ) {
-    const username =
-      obterUsernameTikTokResultado(
-        resultado
-      );
-
-    const streamer =
-      username
-        ? obterStreamerPorUsername(
-            username
-          )
-        : undefined;
-
-    if (streamer) {
-      return obterGrupoDoStreamer(
-        streamer.id
-      );
-    }
-
-    return undefined;
+  function obterGrupoDoResultado(resultado: Resultado) {
+    return obterGrupoDoCriador(chaveCriador(resultado));
   }
 
   function nomeStreamer(
@@ -812,37 +981,14 @@ export default function AdminPage() {
    * ============================================================
    */
 
-  function idsDoGrupo(
-    streamerId: string
-  ): string[] {
-    const grupo =
-      obterGrupoDoStreamer(
-        streamerId
-      );
-
-    if (!grupo) {
-      return [
-        streamerId,
-      ];
-    }
-
-    return grupo.memberIds;
+  function idsDoGrupo(creatorKey: string): string[] {
+    const grupo = obterGrupoDoCriador(creatorKey);
+    return grupo ? grupo.memberIds : [creatorKey];
   }
 
-  function resultadosDoGrupo(
-    streamerId: string
-  ) {
-    const ids =
-      idsDoGrupo(
-        streamerId
-      );
-
-    return resultados.filter(
-      (resultado) =>
-        ids.includes(
-          resultado.streamer_id
-        )
-    );
+  function resultadosDoGrupo(creatorKey: string) {
+    const ids = idsDoGrupo(creatorKey);
+    return resultados.filter((resultado) => ids.includes(chaveCriador(resultado)) && !criadorEstaArquivado(resultado));
   }
 
   function obterUsernameTikTokLinha(
@@ -1033,19 +1179,34 @@ export default function AdminPage() {
       for (
         const row of linhas
       ) {
-        const criadorId =
-          obterCriadorId(
-            row
-          );
+        const criadorIdBase = obterCriadorId(row);
+        if (!criadorIdBase) continue;
 
-        if (!criadorId) {
-          continue;
-        }
-
-        const usernameTikTok =
-          obterUsernameTikTokLinha(
-            row
-          );
+        const usernameTikTok = String(
+          encontrarColuna(row, [
+            "username_tiktok", "username tiktok", "tiktok_username", "tiktok username",
+            "creator_username", "creator username", "username", "user_name", "nickname", "@username",
+          ]) ?? obterUsernameTikTokLinha(row) ?? ""
+        ).trim().replace(/^@+/, "");
+        const nomeDaLinha = obterNomeCriador(row);
+        const nomeConfiavel = Boolean(
+          nomeDaLinha &&
+          !normalizarTexto(nomeDaLinha).includes("deixou_a_agencia") &&
+          !normalizarTexto(nomeDaLinha).startsWith("criador_sem_nome")
+        );
+        const existentePelaIdentidade = resultados.find((existente) => {
+          const usernameExistente = obterUsernameDoRegistroCriador(existente);
+          if (usernameTikTok && usernameExistente) {
+            return normalizarUsername(usernameTikTok) === normalizarUsername(usernameExistente);
+          }
+          if (!usernameTikTok && nomeConfiavel) {
+            return normalizarTexto(obterNomeExibicaoCriador(existente)) === normalizarTexto(nomeDaLinha);
+          }
+          return false;
+        });
+        const criadorId = /^\d{10,}$/.test(criadorIdBase)
+          ? criadorIdBase
+          : (existentePelaIdentidade?.criador_id || criadorIdBase);
 
         const streamerDaLinha =
           usernameTikTok
@@ -1319,7 +1480,11 @@ export default function AdminPage() {
         );
       }
 
+      await atualizarGestaoAposImportacao(resultadosUnicos, resultados);
       await carregarResultados();
+      const gestaoAtualizada = await carregarGestaoCriadores();
+      await arquivarInativosAutomaticamente(gestaoAtualizada);
+      await carregarGestaoCriadores();
 
       setUltimaAtualizacao(
         new Date().toLocaleString(
@@ -1353,8 +1518,10 @@ export default function AdminPage() {
    * ============================================================
    */
 
+  const resultadosNaoArquivados = resultados.filter((item) => !criadorEstaArquivado(item));
+
   const totalDiamantes =
-    resultados.reduce(
+    resultadosNaoArquivados.reduce(
       (total, item) =>
         total +
         (Number(
@@ -1364,7 +1531,7 @@ export default function AdminPage() {
     );
 
   const totalSeguidores =
-    resultados.reduce(
+    resultadosNaoArquivados.reduce(
       (total, item) =>
         total +
         (Number(
@@ -1374,7 +1541,7 @@ export default function AdminPage() {
     );
 
   const totalBatalhas =
-    resultados.reduce(
+    resultadosNaoArquivados.reduce(
       (total, item) =>
         total +
         (Number(
@@ -1384,7 +1551,7 @@ export default function AdminPage() {
     );
 
   const totalTransmissoes =
-    resultados.reduce(
+    resultadosNaoArquivados.reduce(
       (total, item) =>
         total +
         (Number(
@@ -1613,10 +1780,16 @@ export default function AdminPage() {
    * agrupamentos; ela não limita mais quais criadores aparecem aqui.
    */
   const criadoresVisiveis = useMemo(() => {
-    return [...resultados].sort(
-      (a, b) => (Number(b.diamantes) || 0) - (Number(a.diamantes) || 0)
-    );
-  }, [resultados]);
+    return resultadosNaoArquivados
+      .slice()
+      .sort((a, b) => (Number(b.diamantes) || 0) - (Number(a.diamantes) || 0));
+  }, [resultados, gestaoCriadores]);
+
+  const criadoresArquivados = useMemo(() => {
+    return resultados
+      .filter((resultado) => criadorEstaArquivado(resultado))
+      .sort((a, b) => (Number(b.diamantes) || 0) - (Number(a.diamantes) || 0));
+  }, [resultados, gestaoCriadores]);
 
   const criadoresFiltrados = useMemo(() => {
     const termo = normalizarTexto(busca).replace(/^@+/, "");
@@ -1634,11 +1807,21 @@ export default function AdminPage() {
         resultado.status_nivel,
         resultado.status_fa_clube,
       ];
-
       return [nome, username, ...valoresExtras]
         .some((valor) => normalizarTexto(valor).includes(termo));
     });
   }, [criadoresVisiveis, busca]);
+
+  const criadoresArquivadosFiltrados = useMemo(() => {
+    const termo = normalizarTexto(busca).replace(/^@+/, "");
+    if (!termo) return criadoresArquivados;
+    return criadoresArquivados.filter((resultado) => {
+      const username = obterUsernameDoRegistroCriador(resultado);
+      const nome = obterNomeExibicaoCriador(resultado);
+      return [nome, username, resultado.criador_id, resultado.grupo, resultado.agente, obterStatusCriador(resultado)]
+        .some((valor) => normalizarTexto(valor).includes(termo));
+    });
+  }, [criadoresArquivados, busca]);
 
   function obterStatusCriador(resultado: Resultado): string {
     return String(
@@ -1674,6 +1857,7 @@ export default function AdminPage() {
   const ITENS_POR_PAGINA = 20;
   const totalPaginasAtivos = Math.max(1, Math.ceil(criadoresAtivosFiltrados.length / ITENS_POR_PAGINA));
   const totalPaginasSaiu = Math.max(1, Math.ceil(criadoresSaiuFiltrados.length / ITENS_POR_PAGINA));
+  const totalPaginasArquivados = Math.max(1, Math.ceil(criadoresArquivadosFiltrados.length / ITENS_POR_PAGINA));
   const criadoresAtivosPaginados = criadoresAtivosFiltrados.slice(
     (paginaCriadoresAtivos - 1) * ITENS_POR_PAGINA,
     paginaCriadoresAtivos * ITENS_POR_PAGINA
@@ -1681,6 +1865,10 @@ export default function AdminPage() {
   const criadoresSaiuPaginados = criadoresSaiuFiltrados.slice(
     (paginaCriadoresSaiu - 1) * ITENS_POR_PAGINA,
     paginaCriadoresSaiu * ITENS_POR_PAGINA
+  );
+  const criadoresArquivadosPaginados = criadoresArquivadosFiltrados.slice(
+    (paginaCriadoresArquivados - 1) * ITENS_POR_PAGINA,
+    paginaCriadoresArquivados * ITENS_POR_PAGINA
   );
 
   function renderPaginacaoCriadores(
@@ -1756,6 +1944,18 @@ export default function AdminPage() {
           <table className="w-full min-w-[900px]">
             <thead>
               <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-4">
+                  <label className="flex items-center gap-2 whitespace-nowrap normal-case tracking-normal">
+                    <input
+                      type="checkbox"
+                      aria-label="Selecionar todos os criadores desta página"
+                      checked={lista.length > 0 && lista.every((resultado) => selecionadosCriadores.includes(chaveCriador(resultado)))}
+                      onChange={() => alternarSelecaoDaPagina(lista)}
+                      className="h-4 w-4 cursor-pointer accent-purple-500"
+                    />
+                    Página
+                  </label>
+                </th>
                 <th className="px-6 py-4">Criador</th>
                 <th className="px-6 py-4">ID do criador</th>
                 <th className="px-6 py-4">Diamantes</th>
@@ -1770,11 +1970,21 @@ export default function AdminPage() {
                 const nome = obterNomeExibicaoCriador(resultado);
                 const username = obterUsernameDoRegistroCriador(resultado);
                 const status = obterStatusCriador(resultado);
-                const rowKey = resultado.id ?? `${resultado.streamer_id}-${resultado.criador_id}`;
+                const rowKey = chaveCriador(resultado);
+                const selecionado = selecionadosCriadores.includes(rowKey);
                 const saiu = criadorSaiuDaAgencia(resultado);
 
                 return (
                   <tr key={rowKey} className="border-b border-slate-800/70 transition hover:bg-slate-900/50">
+                    <td className="px-4 py-5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Selecionar ${nome}`}
+                        checked={selecionado}
+                        onChange={() => alternarSelecaoCriador(rowKey)}
+                        className="h-4 w-4 cursor-pointer accent-purple-500"
+                      />
+                    </td>
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-3">
                         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg ${saiu ? "bg-amber-500/10" : "bg-blue-500/10"}`}>{saiu ? "↗" : "👤"}</div>
@@ -1813,6 +2023,172 @@ export default function AdminPage() {
     );
   }
 
+  function alternarSelecaoCriador(creatorKey: string) {
+    setSelecionadosCriadores((atuais) =>
+      atuais.includes(creatorKey)
+        ? atuais.filter((key) => key !== creatorKey)
+        : [...atuais, creatorKey]
+    );
+  }
+
+  function alternarSelecaoDaPagina(lista: Resultado[]) {
+    const chavesDaPagina = lista.map(chaveCriador);
+    if (!chavesDaPagina.length) return;
+
+    const todasSelecionadas = chavesDaPagina.every((key) =>
+      selecionadosCriadores.includes(key)
+    );
+
+    setSelecionadosCriadores((atuais) => {
+      if (todasSelecionadas) {
+        return atuais.filter((key) => !chavesDaPagina.includes(key));
+      }
+      return Array.from(new Set([...atuais, ...chavesDaPagina]));
+    });
+  }
+
+  async function arquivarSelecionados() {
+    if (!selecionadosCriadores.length) return;
+    const confirmar = window.confirm(
+      `Remover ${selecionadosCriadores.length} criador(es) da lista ativa? Os dados serão arquivados e continuarão no Supabase para poderem ser restaurados.`
+    );
+    if (!confirmar) return;
+
+    const agoraIso = new Date().toISOString();
+    const { error } = await supabase
+      .from("criador_gestao")
+      .update({
+        archived_at: agoraIso,
+        manual_archived: true,
+        archive_reason: "manual",
+        updated_at: agoraIso,
+      })
+      .in("creator_key", selecionadosCriadores);
+
+    if (error) {
+      setErro(`Não consegui arquivar os criadores: ${error.message}`);
+      return;
+    }
+
+    setMensagem(`${selecionadosCriadores.length} criador(es) arquivado(s). Os dados foram preservados.`);
+    setSelecionadosCriadores([]);
+    await carregarGestaoCriadores();
+  }
+
+  async function reativarSelecionados() {
+    const chavesArquivadas = selecionadosCriadores.filter((key) =>
+      gestaoCriadores.some((item) => item.creator_key === key && Boolean(item.archived_at))
+    );
+
+    if (!chavesArquivadas.length) {
+      setErro("Selecione pelo menos um criador na tabela 'Criadores arquivados' para reativá-lo.");
+      return;
+    }
+
+    const agoraIso = new Date().toISOString();
+    const atualizacoes = chavesArquivadas.map((key) => {
+      const criador = obterCriadorPorChave(key);
+      const gestaoAnterior = obterGestaoDoCriador(key);
+      const ativoNoUltimoRelatorio = criador ? criadorTemAtividade(criador) : false;
+      const periodo = criador ? obterPeriodoRelatorio(criador) : null;
+
+      return {
+        creator_key: key,
+        streamer_id: criador?.streamer_id || gestaoAnterior?.streamer_id || "",
+        criador_id: criador?.criador_id || gestaoAnterior?.criador_id || "",
+        inactive_since: ativoNoUltimoRelatorio ? null : agoraIso,
+        last_active_at: ativoNoUltimoRelatorio
+          ? (periodo?.fim.toISOString() || agoraIso)
+          : (gestaoAnterior?.last_active_at || null),
+        archived_at: null,
+        manual_archived: false,
+        archive_reason: null,
+        updated_at: agoraIso,
+      };
+    });
+
+    const { error } = await supabase
+      .from("criador_gestao")
+      .upsert(atualizacoes, { onConflict: "creator_key" });
+
+    if (error) {
+      setErro(`Não consegui reativar os criadores: ${error.message}`);
+      return;
+    }
+
+    setMensagem(`${chavesArquivadas.length} criador(es) reativado(s). Os registros e resultados foram preservados.`);
+    setSelecionadosCriadores((atuais) => atuais.filter((key) => !chavesArquivadas.includes(key)));
+    await carregarGestaoCriadores();
+  }
+
+  async function excluirSelecionadosDefinitivamente() {
+    const selecionados = resultados.filter((resultado) =>
+      selecionadosCriadores.includes(chaveCriador(resultado))
+    );
+    if (!selecionados.length) return;
+
+    const senha = window.prompt("Para excluir definitivamente, digite a senha administrativa:");
+    if (senha !== ADMIN_GROUP_PASSWORD) {
+      if (senha !== null) setErro("Senha administrativa incorreta.");
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `ATENÇÃO: isso apagará definitivamente ${selecionados.length} registro(s) da tabela resultados_streamers e dos grupos. Essa ação não pode ser desfeita. Deseja continuar?`
+    );
+    if (!confirmar) return;
+
+    setErro("");
+    try {
+      const keys = selecionados.map(chaveCriador);
+      for (const grupo of grupos) {
+        const membrosRestantes = grupo.memberIds.filter((key) => !keys.includes(key));
+        if (membrosRestantes.length < 2) {
+          const { error: groupDeleteError } = await supabase
+            .from("criador_grupos")
+            .delete()
+            .eq("id", grupo.id);
+          if (groupDeleteError) throw new Error(groupDeleteError.message);
+        } else if (keys.includes(grupo.streamer_principal_id)) {
+          const { error: principalError } = await supabase
+            .from("criador_grupos")
+            .update({ principal_creator_key: membrosRestantes[0] })
+            .eq("id", grupo.id);
+          if (principalError) throw new Error(principalError.message);
+        }
+      }
+
+      const { error: memberError } = await supabase
+        .from("criador_grupo_membros")
+        .delete()
+        .in("creator_key", keys);
+      if (memberError) throw new Error(memberError.message);
+
+      for (const resultado of selecionados) {
+        const { error: resultDeleteError } = await supabase
+          .from("resultados_streamers")
+          .delete()
+          .eq("streamer_id", resultado.streamer_id)
+          .eq("criador_id", resultado.criador_id);
+        if (resultDeleteError) throw new Error(resultDeleteError.message);
+      }
+
+      const { error: managementError } = await supabase
+        .from("criador_gestao")
+        .delete()
+        .in("creator_key", keys);
+      if (managementError) throw new Error(managementError.message);
+
+      setMensagem(`${selecionados.length} registro(s) excluído(s) definitivamente.`);
+      setSelecionadosCriadores([]);
+      await carregarResultados();
+      await carregarGestaoCriadores();
+      await carregarGrupos();
+    } catch (error: any) {
+      setErro(`Erro durante a exclusão: ${error?.message || "erro desconhecido"}`);
+    }
+  }
+
   const rankingCriadores = useMemo(() => {
     return criadoresVisiveis.slice(0, 5).map((resultado) => ({
       resultado,
@@ -1830,78 +2206,32 @@ export default function AdminPage() {
    */
 
   function abrirNovoGrupo() {
-    setGrupoSelecionado(
-      null
-    );
-
+    setGrupoSelecionado(null);
     setNomeGrupo("");
-
-    setPrincipalSelecionado(
-      ""
-    );
-
-    setMembrosSelecionados(
-      []
-    );
-
-    setSenhaAgrupamento(
-      ""
-    );
-
+    setPrincipalSelecionado("");
+    setMembrosSelecionados([]);
+    setBuscaAgrupamento("");
+    setSenhaAgrupamento("");
     setErro("");
-
-    setMostrarAgrupamento(
-      true
-    );
+    setMostrarAgrupamento(true);
   }
 
-  function abrirEditarGrupo(
-    grupo: StreamerGroup
-  ) {
-    setGrupoSelecionado(
-      grupo
-    );
-
-    setNomeGrupo(
-      grupo.nome
-    );
-
-    setPrincipalSelecionado(
-      grupo.streamer_principal_id
-    );
-
-    setMembrosSelecionados(
-      grupo.memberIds
-    );
-
-    setSenhaAgrupamento(
-      ""
-    );
-
+  function abrirEditarGrupo(grupo: StreamerGroup) {
+    setGrupoSelecionado(grupo);
+    setNomeGrupo(grupo.nome);
+    setPrincipalSelecionado(grupo.streamer_principal_id);
+    setMembrosSelecionados(grupo.memberIds);
+    setBuscaAgrupamento("");
+    setSenhaAgrupamento("");
     setErro("");
-
-    setMostrarAgrupamento(
-      true
-    );
+    setMostrarAgrupamento(true);
   }
 
-  function alternarMembro(
-    streamerId: string
-  ) {
-    setMembrosSelecionados(
-      (atual) =>
-        atual.includes(
-          streamerId
-        )
-          ? atual.filter(
-              (id) =>
-                id !==
-                streamerId
-            )
-          : [
-              ...atual,
-              streamerId,
-            ]
+  function alternarMembro(creatorKey: string) {
+    setMembrosSelecionados((atuais) =>
+      atuais.includes(creatorKey)
+        ? atuais.filter((key) => key !== creatorKey)
+        : [...atuais, creatorKey]
     );
   }
 
@@ -1909,281 +2239,145 @@ export default function AdminPage() {
     setErro("");
     setMensagem("");
 
-    if (
-      senhaAgrupamento !==
-      ADMIN_GROUP_PASSWORD
-    ) {
-      setErro(
-        "Senha administrativa incorreta."
-      );
-
+    if (senhaAgrupamento !== ADMIN_GROUP_PASSWORD) {
+      setErro("Senha administrativa incorreta.");
+      return;
+    }
+    if (!nomeGrupo.trim()) {
+      setErro("Digite um nome para o grupo.");
+      return;
+    }
+    if (!principalSelecionado) {
+      setErro("Selecione o criador principal.");
       return;
     }
 
-    if (
-      !nomeGrupo.trim()
-    ) {
-      setErro(
-        "Digite um nome para o grupo."
-      );
-
+    const chavesMembros = Array.from(new Set([principalSelecionado, ...membrosSelecionados]));
+    if (chavesMembros.length < 2) {
+      setErro("Selecione pelo menos dois criadores para criar um agrupamento.");
       return;
     }
 
-    if (
-      !principalSelecionado
-    ) {
-      setErro(
-        "Selecione a conta principal."
-      );
-
-      return;
-    }
-
-    const membros =
-      Array.from(
-        new Set([
-          principalSelecionado,
-          ...membrosSelecionados,
-        ])
-      );
-
-    if (
-      membros.length <
-      2
-    ) {
-      setErro(
-        "Selecione pelo menos duas contas para criar um agrupamento."
-      );
-
+    const criadoresValidos = new Set(resultados.map(chaveCriador));
+    if (chavesMembros.some((key) => !criadoresValidos.has(key))) {
+      setErro("Um dos criadores selecionados não está mais na lista importada. Atualize o painel e tente novamente.");
       return;
     }
 
     setAgrupando(true);
-
     try {
-      /*
-       * Uma conta não pode ficar em dois grupos.
-       */
+      let groupId = grupoSelecionado?.id;
 
-      const {
-        error: removerError,
-      } = await supabase
-        .from(
-          "streamer_group_members"
-        )
-        .delete()
-        .in(
-          "streamer_id",
-          membros
-        );
-
-      if (
-        removerError
-      ) {
-        throw new Error(
-          `Erro ao preparar agrupamento: ${removerError.message}`
-        );
-      }
-
-      let groupId =
-        grupoSelecionado?.id;
-
-      /*
-       * ATUALIZA GRUPO
-       */
-
-      if (
-        grupoSelecionado
-      ) {
-        const {
-          error:
-            updateError,
-        } = await supabase
-          .from(
-            "streamer_groups"
-          )
+      if (grupoSelecionado) {
+        const { error: updateError } = await supabase
+          .from("criador_grupos")
           .update({
-            nome:
-              nomeGrupo.trim(),
-
-            streamer_principal_id:
-              principalSelecionado,
+            nome: nomeGrupo.trim(),
+            principal_creator_key: principalSelecionado,
           })
-          .eq(
-            "id",
-            grupoSelecionado.id
-          );
+          .eq("id", grupoSelecionado.id);
+        if (updateError) throw new Error(`Erro ao atualizar grupo: ${updateError.message}`);
 
-        if (
-          updateError
-        ) {
-          throw new Error(
-            `Erro ao atualizar grupo: ${updateError.message}`
-          );
-        }
-      }
-
-      /*
-       * CRIA GRUPO
-       */
-
-      else {
-        const {
-          data:
-            novoGrupo,
-          error:
-            createError,
-        } = await supabase
-          .from(
-            "streamer_groups"
-          )
+        const { error: removeMembersError } = await supabase
+          .from("criador_grupo_membros")
+          .delete()
+          .eq("group_id", grupoSelecionado.id);
+        if (removeMembersError) throw new Error(`Erro ao atualizar membros: ${removeMembersError.message}`);
+      } else {
+        const { data: novoGrupo, error: createError } = await supabase
+          .from("criador_grupos")
           .insert({
-            nome:
-              nomeGrupo.trim(),
-
-            streamer_principal_id:
-              principalSelecionado,
+            nome: nomeGrupo.trim(),
+            principal_creator_key: principalSelecionado,
           })
-          .select(
-            "id"
-          )
+          .select("id")
           .single();
+        if (createError) throw new Error(`Erro ao criar grupo: ${createError.message}`);
+        groupId = novoGrupo.id;
+      }
 
-        if (
-          createError
-        ) {
-          throw new Error(
-            `Erro ao criar grupo: ${createError.message}`
-          );
+      if (!groupId) throw new Error("Não foi possível identificar o grupo.");
+
+      // Cada criador só pode pertencer a um grupo. Ao transferir membros,
+      // corrigimos o antigo principal ou removemos grupos que ficariam vazios.
+      for (const grupoAntigo of grupos) {
+        if (grupoAntigo.id === groupId) continue;
+        const membrosRestantes = grupoAntigo.memberIds.filter((key) => !chavesMembros.includes(key));
+        const algumSelecionadoEstavaNoGrupo = grupoAntigo.memberIds.some((key) => chavesMembros.includes(key));
+        if (!algumSelecionadoEstavaNoGrupo) continue;
+
+        if (membrosRestantes.length < 2) {
+          const { error: apagarGrupoVazioError } = await supabase
+            .from("criador_grupos")
+            .delete()
+            .eq("id", grupoAntigo.id);
+          if (apagarGrupoVazioError) throw new Error(apagarGrupoVazioError.message);
+        } else if (chavesMembros.includes(grupoAntigo.streamer_principal_id)) {
+          const { error: atualizarPrincipalError } = await supabase
+            .from("criador_grupos")
+            .update({ principal_creator_key: membrosRestantes[0] })
+            .eq("id", grupoAntigo.id);
+          if (atualizarPrincipalError) throw new Error(atualizarPrincipalError.message);
         }
-
-        groupId =
-          novoGrupo.id;
       }
 
-      if (!groupId) {
-        throw new Error(
-          "Não foi possível identificar o grupo."
-        );
+      const { error: removerDeOutrosGruposError } = await supabase
+        .from("criador_grupo_membros")
+        .delete()
+        .in("creator_key", chavesMembros);
+      if (removerDeOutrosGruposError) {
+        throw new Error(`Erro ao reorganizar membros: ${removerDeOutrosGruposError.message}`);
       }
 
-      const registros =
-        membros.map(
-          (streamerId) => ({
-            group_id:
-              groupId,
+      const registros = chavesMembros.map((key) => {
+        const criador = obterCriadorPorChave(key)!;
+        return {
+          group_id: groupId,
+          creator_key: key,
+          streamer_id: criador.streamer_id,
+          criador_id: criador.criador_id,
+          nome_criador: obterNomeExibicaoCriador(criador),
+          username_tiktok: obterUsernameDoRegistroCriador(criador) || null,
+        };
+      });
 
-            streamer_id:
-              streamerId,
-          })
-        );
-
-      const {
-        error:
-          membersError,
-      } = await supabase
-        .from(
-          "streamer_group_members"
-        )
-        .insert(
-          registros
-        );
-
-      if (
-        membersError
-      ) {
-        throw new Error(
-          `Erro ao adicionar contas ao grupo: ${membersError.message}`
-        );
-      }
+      const { error: membersError } = await supabase
+        .from("criador_grupo_membros")
+        .insert(registros);
+      if (membersError) throw new Error(`Erro ao adicionar criadores ao grupo: ${membersError.message}`);
 
       await carregarGrupos();
-
-      setMensagem(
-        grupoSelecionado
-          ? "Grupo atualizado com sucesso!"
-          : "Grupo criado com sucesso!"
-      );
-
-      setMostrarAgrupamento(
-        false
-      );
-    } catch (
-      error: any
-    ) {
-      console.error(
-        "Erro no agrupamento:",
-        error
-      );
-
-      setErro(
-        error?.message ||
-          "Não foi possível salvar o agrupamento."
-      );
+      setMensagem(grupoSelecionado ? "Grupo de criadores atualizado com sucesso!" : "Grupo de criadores criado com sucesso!");
+      setMostrarAgrupamento(false);
+    } catch (error: any) {
+      console.error("Erro no agrupamento de criadores:", error);
+      setErro(error?.message || "Não foi possível salvar o agrupamento.");
     } finally {
-      setAgrupando(
-        false
-      );
+      setAgrupando(false);
     }
   }
 
-  async function excluirGrupo(
-    grupo: StreamerGroup
-  ) {
-    const senha =
-      window.prompt(
-        "Digite a senha administrativa para excluir este grupo:"
-      );
-
-    if (
-      senha !==
-      ADMIN_GROUP_PASSWORD
-    ) {
-      if (
-        senha !== null
-      ) {
-        setErro(
-          "Senha administrativa incorreta."
-        );
-      }
-
+  async function excluirGrupo(grupo: StreamerGroup) {
+    const senha = window.prompt("Digite a senha administrativa para excluir este grupo:");
+    if (senha !== ADMIN_GROUP_PASSWORD) {
+      if (senha !== null) setErro("Senha administrativa incorreta.");
       return;
     }
 
-    const confirmar =
-      window.confirm(
-        `Excluir o grupo "${grupo.nome}"? As contas NÃO serão apagadas.`
-      );
+    const confirmar = window.confirm(`Excluir o grupo "${grupo.nome}"? Os criadores e seus resultados NÃO serão apagados.`);
+    if (!confirmar) return;
 
-    if (!confirmar) {
-      return;
-    }
-
-    const {
-      error,
-    } = await supabase
-      .from(
-        "streamer_groups"
-      )
+    const { error } = await supabase
+      .from("criador_grupos")
       .delete()
-      .eq(
-        "id",
-        grupo.id
-      );
+      .eq("id", grupo.id);
 
     if (error) {
-      setErro(
-        `Erro ao excluir grupo: ${error.message}`
-      );
-
+      setErro(`Erro ao excluir grupo: ${error.message}`);
       return;
     }
 
-    setMensagem(
-      "Grupo excluído. As contas continuam cadastradas normalmente."
-    );
-
+    setMensagem("Grupo excluído. Os criadores continuam cadastrados normalmente.");
     await carregarGrupos();
   }
 
@@ -2643,7 +2837,7 @@ export default function AdminPage() {
                 icon="👤"
               />
               <SummaryRow
-                label="Grupos de contas"
+                label="Grupos de criadores"
                 value={grupos.length}
                 icon="🔗"
               />
@@ -2690,14 +2884,11 @@ export default function AdminPage() {
               </p>
 
               <h3 className="mt-1 text-2xl font-bold">
-                🔗 Agrupamento de contas
+                🔗 Agrupamento de criadores
               </h3>
 
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-                Una duas ou mais contas do mesmo
-                streamer. Os dados permanecem
-                separados no banco, mas os painéis
-                usam o resultado consolidado do grupo.
+                Agrupe os criadores importados que pertencem à mesma pessoa. A lista usa todos os registros do relatório, não apenas as contas cadastradas para login.
               </p>
 
             </div>
@@ -2708,7 +2899,7 @@ export default function AdminPage() {
               }
               className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold transition hover:bg-purple-500"
             >
-              + Agrupar contas
+              + Agrupar criadores
             </button>
 
           </div>
@@ -2724,13 +2915,11 @@ export default function AdminPage() {
                 </div>
 
                 <p className="mt-3 font-bold text-slate-300">
-                  Nenhuma conta agrupada ainda
+                  Nenhum criador agrupado ainda
                 </p>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Quando um streamer precisar trocar
-                  de conta, você poderá vincular a nova
-                  conta à antiga.
+                  Use “Agrupar criadores” para reunir perfis do mesmo integrante. Todos os criadores importados aparecem na seleção.
                 </p>
 
               </div>
@@ -2740,27 +2929,11 @@ export default function AdminPage() {
                 {grupos.map(
                   (grupo) => {
 
-                    const principal =
-                      obterStreamer(
-                        grupo.streamer_principal_id
-                      );
-
-                    const membros =
-                      grupo.memberIds
-                        .map(
-                          (id) =>
-                            obterStreamer(
-                              id
-                            )
-                        )
-                        .filter(
-                          Boolean
-                        ) as Streamer[];
-
-                    const dados =
-                      resultadosDoGrupo(
-                        grupo.streamer_principal_id
-                      );
+                    const principal = obterCriadorPorChave(grupo.streamer_principal_id);
+                    const membros = grupo.memberIds
+                      .map((key) => obterCriadorPorChave(key))
+                      .filter(Boolean) as Resultado[];
+                    const dados = resultadosDoGrupo(grupo.streamer_principal_id);
 
                     const diamantes =
                       dados.reduce(
@@ -2823,7 +2996,7 @@ export default function AdminPage() {
                                 {
                                   membros.length
                                 }{" "}
-                                contas
+                                criadores
                               </span>
 
                             </div>
@@ -2837,7 +3010,9 @@ export default function AdminPage() {
                             <p className="mt-1 text-xs text-slate-500">
                               Principal:{" "}
                               {principal
-                                ? `@${principal.username_tiktok}`
+                                ? (obterUsernameDoRegistroCriador(principal)
+                                    ? `@${obterUsernameDoRegistroCriador(principal)}`
+                                    : obterNomeExibicaoCriador(principal))
                                 : "—"}
                             </p>
 
@@ -2893,7 +3068,7 @@ export default function AdminPage() {
                             ) => (
                               <div
                                 key={
-                                  membro.id
+                                  chaveCriador(membro)
                                 }
                                 className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5"
                               >
@@ -2905,15 +3080,14 @@ export default function AdminPage() {
                                   </span>
 
                                   <span className="text-sm font-semibold">
-                                    @
-                                    {
-                                      membro.username_tiktok
-                                    }
+                                    {obterUsernameDoRegistroCriador(membro)
+                                      ? `@${obterUsernameDoRegistroCriador(membro)}`
+                                      : obterNomeExibicaoCriador(membro)}
                                   </span>
 
                                 </div>
 
-                                {membro.id ===
+                                {chaveCriador(membro) ===
                                   grupo.streamer_principal_id && (
                                   <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-400">
                                     PRINCIPAL
@@ -3105,6 +3279,30 @@ export default function AdminPage() {
 
         </div>
 
+        {/* CONTROLE MANUAL / INATIVIDADE */}
+        <div className="mb-8 rounded-3xl border border-slate-800 bg-[#0b1224] p-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <h3 className="text-lg font-bold">🧹 Organização e inatividade</h3>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">
+                Criadores sem diamantes, duração de live, dias válidos e transmissões por 30 dias são arquivados automaticamente. O arquivamento os tira dos totais, mas preserva os registros e permite restaurar.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Selecionados: {selecionadosCriadores.length}. A exclusão definitiva apaga dados do relatório; use com cuidado.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={!selecionadosCriadores.length} onClick={arquivarSelecionados} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40">
+                Arquivar selecionados
+              </button>
+              <button type="button" disabled={!selecionadosCriadores.length} onClick={reativarSelecionados} className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-2.5 text-sm font-semibold text-green-300 transition hover:bg-green-500/20 disabled:cursor-not-allowed disabled:opacity-40">
+                Reativar selecionados
+              </button>
+              <button type="button" disabled={!selecionadosCriadores.length} onClick={excluirSelecionadosDefinitivamente} className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40">
+                Excluir definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* CRIADORES ATIVOS / IMPORTADOS */}
         <div className="mb-8 overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
           <div className="border-b border-slate-800 px-6 py-5">
@@ -3167,6 +3365,29 @@ export default function AdminPage() {
           )}
         </div>
 
+        {/* CRIADORES ARQUIVADOS */}
+        <div className="mt-8 overflow-hidden rounded-3xl border border-slate-700 bg-[#0b1224]">
+          <div className="border-b border-slate-800 px-6 py-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xl font-bold">📦 Criadores arquivados</h3>
+                  <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-300">{formatarNumero(criadoresArquivadosFiltrados.length)}</span>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">Arquivados automaticamente após 30 dias sem atividade ou por ação manual. Selecione e clique em “Reativar selecionados” para trazer de volta.</p>
+              </div>
+              <span className="whitespace-nowrap rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400">20 pessoas por página</span>
+            </div>
+          </div>
+          {renderTabelaCriadores(
+            criadoresArquivadosPaginados,
+            paginaCriadoresArquivados,
+            totalPaginasArquivados,
+            setPaginaCriadoresArquivados,
+            "Nenhum criador arquivado."
+          )}
+        </div>
+
       </section>
 
       {/* ========================================================
@@ -3208,15 +3429,12 @@ export default function AdminPage() {
                     {
                       grupoSelecionado
                         ? "Editar agrupamento"
-                        : "Agrupar contas"
+                        : "Agrupar criadores"
                     }
                   </h2>
 
                   <p className="mt-2 text-sm leading-6 text-slate-400">
-                    Selecione as contas que pertencem
-                    ao mesmo streamer. Os dados continuam
-                    separados no banco, mas serão
-                    consolidados nos painéis.
+                    Selecione todos os perfis do mesmo integrante. A lista inclui os criadores importados do relatório, não apenas contas de login.
                   </p>
 
                 </div>
@@ -3269,7 +3487,7 @@ export default function AdminPage() {
               <div>
 
                 <label className="mb-2 block text-sm font-semibold text-slate-300">
-                  Conta principal
+                  Criador principal
                 </label>
 
                 <select
@@ -3288,36 +3506,22 @@ export default function AdminPage() {
                 >
 
                   <option value="">
-                    Selecione a conta principal
+                    Selecione o criador principal
                   </option>
 
-                  {streamers.map(
-                    (
-                      streamer
-                    ) => (
-
-                      <option
-                        key={
-                          streamer.id
-                        }
-                        value={
-                          streamer.id
-                        }
-                      >
-                        @
-                        {
-                          streamer.username_tiktok
-                        }
+                  {criadoresVisiveis.map((criador) => {
+                    const username = obterUsernameDoRegistroCriador(criador);
+                    return (
+                      <option key={chaveCriador(criador)} value={chaveCriador(criador)}>
+                        {username ? `@${username}` : obterNomeExibicaoCriador(criador)} — ID {criador.criador_id}
                       </option>
-
-                    )
-                  )}
+                    );
+                  })}
 
                 </select>
 
                 <p className="mt-2 text-xs text-slate-500">
-                  Essa será a conta-base usada para
-                  identificar o grupo nos painéis.
+                  Esse criador será usado como referência principal do grupo.
                 </p>
 
               </div>
@@ -3329,7 +3533,7 @@ export default function AdminPage() {
                 <div className="mb-3 flex items-center justify-between">
 
                   <label className="text-sm font-semibold text-slate-300">
-                    Contas que pertencem ao grupo
+                    Criadores que pertencem ao grupo
                   </label>
 
                   <span className="text-xs text-slate-500">
@@ -3341,37 +3545,33 @@ export default function AdminPage() {
 
                 </div>
 
-                <div className="space-y-2">
+                <input
+                  value={buscaAgrupamento}
+                  onChange={(event) => setBuscaAgrupamento(event.target.value)}
+                  placeholder="Pesquisar entre todos os criadores..."
+                  className="mb-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-purple-500"
+                />
 
-                  {streamers.map(
-                    (
-                      streamer
-                    ) => {
+                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
 
-                      const marcado =
-                        membrosSelecionados.includes(
-                          streamer.id
-                        ) ||
-                        principalSelecionado ===
-                          streamer.id;
-
-                      const outroGrupo =
-                        obterGrupoDoStreamer(
-                          streamer.id
-                        );
+                  {criadoresVisiveis
+                    .filter((criador) => {
+                      const termo = normalizarTexto(buscaAgrupamento);
+                      if (!termo) return true;
+                      return [obterNomeExibicaoCriador(criador), obterUsernameDoRegistroCriador(criador), criador.criador_id]
+                        .some((valor) => normalizarTexto(valor).includes(termo));
+                    })
+                    .map((criador) => {
+                      const creatorKey = chaveCriador(criador);
+                      const username = obterUsernameDoRegistroCriador(criador);
+                      const marcado = membrosSelecionados.includes(creatorKey) || principalSelecionado === creatorKey;
+                      const outroGrupo = obterGrupoDoCriador(creatorKey);
 
                       return (
-
                         <button
                           type="button"
-                          key={
-                            streamer.id
-                          }
-                          onClick={() =>
-                            alternarMembro(
-                              streamer.id
-                            )
-                          }
+                          key={creatorKey}
+                          onClick={() => alternarMembro(creatorKey)}
                           className={`flex w-full items-center justify-between rounded-2xl border p-4 text-left transition ${
                             marcado
                               ? "border-purple-500/50 bg-purple-500/10"
@@ -3398,16 +3598,11 @@ export default function AdminPage() {
                             <div>
 
                               <p className="font-semibold">
-                                @
-                                {
-                                  streamer.username_tiktok
-                                }
+                                {username ? `@${username}` : obterNomeExibicaoCriador(criador)}
                               </p>
 
                               <p className="mt-1 text-xs text-slate-500">
-                                {
-                                  streamer.email
-                                }
+                                ID: {criador.criador_id} · 💎 {formatarNumero(criador.diamantes)}
                               </p>
 
                             </div>
@@ -3418,7 +3613,7 @@ export default function AdminPage() {
 
                             {
                               principalSelecionado ===
-                                streamer.id && (
+                                creatorKey && (
 
                                 <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-400">
                                   PRINCIPAL
@@ -3430,7 +3625,7 @@ export default function AdminPage() {
                             {
                               (!principalSelecionado ||
                                 principalSelecionado !==
-                                  streamer.id) &&
+                                  creatorKey) &&
                                 outroGrupo &&
                                 outroGrupo.id !==
                                   grupoSelecionado?.id && (
