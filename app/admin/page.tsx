@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import * as XLSX from "xlsx";
-import Logo from "@/components/Logo";
 
 type Streamer = {
   id: string;
@@ -508,6 +507,49 @@ export default function AdminPage() {
       : null;
   }
 
+  /** Converte durações do relatório como "13h 0m 25s" para segundos. */
+  function duracaoParaSegundos(valor: any): number | null {
+    if (valor === null || valor === undefined || valor === "") return null;
+    if (typeof valor === "number") return Number.isFinite(valor) ? valor : null;
+
+    const texto = String(valor).trim();
+    if (!texto) return null;
+
+    const horario = texto.match(/^\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?\s*$/i);
+    if (/[hms]/i.test(texto) && horario && (horario[1] || horario[2] || horario[3])) {
+      const horas = Number(horario[1] || 0);
+      const minutos = Number(horario[2] || 0);
+      const segundos = Number(horario[3] || 0);
+      return horas * 3600 + minutos * 60 + segundos;
+    }
+
+    const hms = texto.match(/^(\d+):(\d{1,2}):(\d{1,2})$/);
+    if (hms) return Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3]);
+
+    const ms = texto.match(/^(\d+):(\d{1,2})$/);
+    if (ms) return Number(ms[1]) * 60 + Number(ms[2]);
+
+    return numero(texto);
+  }
+
+  /** Exibe a string original do relatório quando disponível, evitando mostrar "13025". */
+  function obterDuracaoExibicao(resultado: Resultado): string {
+    const original = encontrarColuna(
+      resultado.dados_completos || {},
+      ["Duração da LIVE", "Duração de LIVE", "duracao_live", "live duration"]
+    );
+    if (original !== null && original !== undefined && String(original).trim()) {
+      return String(original).trim();
+    }
+
+    const segundos = Number(resultado.duracao_live);
+    if (!Number.isFinite(segundos) || segundos < 0) return "—";
+    const horas = Math.floor(segundos / 3600);
+    const minutos = Math.floor((segundos % 3600) / 60);
+    const resto = Math.floor(segundos % 60);
+    return `${horas}h ${minutos}m ${resto}s`;
+  }
+
   function encontrarColuna(
     row: Record<string, any>,
     nomes: string[]
@@ -942,6 +984,15 @@ export default function AdminPage() {
         "username tiktok",
         "tiktok_username",
         "tiktok username",
+        "creator_username",
+        "creator username",
+        "username",
+        "user_name",
+        "nickname",
+        "@username",
+        // O Excel oficial não possui coluna separada de username: usa "Nome do criador".
+        "nome do criador",
+        "nome_criador",
       ]
     );
 
@@ -1013,6 +1064,15 @@ export default function AdminPage() {
         "username tiktok",
         "tiktok_username",
         "tiktok username",
+        "creator_username",
+        "creator username",
+        "username",
+        "user_name",
+        "nickname",
+        "@username",
+        // Neste relatório, "Nome do criador" é o @/nome identificador exibido pelo TikTok.
+        "nome do criador",
+        "nome_criador",
       ]
     );
 
@@ -1039,6 +1099,11 @@ export default function AdminPage() {
         "user_name",
         "nickname",
         "@username",
+        // No relatório TikTok recebido, a coluna "Nome do criador" traz o identificador.
+        "nome do criador",
+        "nome_criador",
+        "creator_name",
+        "creator name",
       ]
     );
 
@@ -1198,6 +1263,7 @@ export default function AdminPage() {
           encontrarColuna(row, [
             "username_tiktok", "username tiktok", "tiktok_username", "tiktok username",
             "creator_username", "creator username", "username", "user_name", "nickname", "@username",
+            "nome do criador", "nome_criador",
           ]) ?? obterUsernameTikTokLinha(row) ?? ""
         ).trim().replace(/^@+/, "");
         const nomeDaLinha = obterNomeCriador(row);
@@ -1220,15 +1286,15 @@ export default function AdminPage() {
           ? criadorIdBase
           : (existentePelaIdentidade?.criador_id || criadorIdBase);
 
-        const streamerDaLinha =
-          usernameTikTok
-            ? obterStreamerPorUsername(
-                usernameTikTok
-              )
-            : undefined;
+        // Preserve a linha existente no mesmo streamer_id. Os resultados são do relatório da agência;
+        // o dashboard individual faz o vínculo seguro pelo @ dentro de dados_completos. Alterar streamer_id
+        // em reimportações criaria duplicatas por causa da chave única (streamer_id, criador_id).
+        const registroAnterior =
+          existentePelaIdentidade ||
+          resultados.find((existente) => String(existente.criador_id) === String(criadorId));
 
         const streamerIdParaSalvar =
-          streamerDaLinha?.id ||
+          registroAnterior?.streamer_id ||
           streamers[0]?.id;
 
         if (!streamerIdParaSalvar) {
@@ -1284,7 +1350,7 @@ export default function AdminPage() {
             ),
 
           duracao_live:
-            numero(
+            duracaoParaSegundos(
               encontrarColuna(
                 row,
                 [
@@ -1307,6 +1373,8 @@ export default function AdminPage() {
                   "dias válidos live",
                   "dias validos",
                   "dias válidos",
+                  "dias válidos de início de LIVE",
+                  "dias validos de inicio de live",
                 ]
               )
             ),
@@ -1334,6 +1402,8 @@ export default function AdminPage() {
                   "lives",
                   "numero de transmissoes",
                   "número de transmissões",
+                  "transmissões de LIVE",
+                  "transmissoes de live",
                 ]
               )
             ),
@@ -1358,6 +1428,7 @@ export default function AdminPage() {
                 [
                   "diamantes_batalhas",
                   "diamantes de batalhas",
+                  "diamantes obtidos de batalhas",
                   "battle diamonds",
                   "battle_diamonds",
                 ]
@@ -1384,6 +1455,8 @@ export default function AdminPage() {
                 "status_graduacao",
                 "status graduação",
                 "status de graduação",
+                "status da graduação",
+                "status da graduacao",
                 "graduacao",
                 "graduação",
               ]
@@ -1397,6 +1470,8 @@ export default function AdminPage() {
                 "status_nivel",
                 "status nível",
                 "status nivel",
+                "status do nível",
+                "status do nivel",
                 "nivel",
                 "nível",
               ]
@@ -2477,7 +2552,7 @@ export default function AdminPage() {
           <div className="flex items-center gap-3">
 
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/20">
-              <Logo size={20} />
+              ⚡
             </div>
 
             <div>
@@ -4179,9 +4254,7 @@ export default function AdminPage() {
 
                   <Info
                     titulo="Duração da live"
-                    valor={
-                      resultadoSelecionado.duracao_live
-                    }
+                    valor={obterDuracaoExibicao(resultadoSelecionado)}
                   />
 
                   <Info
@@ -4220,10 +4293,31 @@ export default function AdminPage() {
                   />
 
                   <Info
-                    titulo="Status fã-clube"
-                    valor={
-                      resultadoSelecionado.status_fa_clube
-                    }
+                    titulo="Fãs ativos do Fã-clube"
+                    valor={encontrarColuna(
+                      resultadoSelecionado.dados_completos || {},
+                      ["Fãs ativos do Fã-clube", "Fans ativos do fã-clube", "Fãs ativos"]
+                    )}
+                  />
+
+                  <Info
+                    titulo="Diamantes do Fã-clube"
+                    valor={formatarNumero(numero(
+                      encontrarColuna(
+                        resultadoSelecionado.dados_completos || {},
+                        ["Total de Diamantes do Fã-clube", "Diamantes do Fã-clube", "Total de diamantes do fan club"]
+                      )
+                    ))}
+                  />
+
+                  <Info
+                    titulo="Total de fãs"
+                    valor={formatarNumero(numero(
+                      encontrarColuna(
+                        resultadoSelecionado.dados_completos || {},
+                        ["Total de fãs", "Total de fans", "Fãs totais"]
+                      )
+                    ))}
                   />
 
                   <Info

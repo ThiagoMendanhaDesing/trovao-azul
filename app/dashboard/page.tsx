@@ -64,6 +64,14 @@ function formatarNumero(value: number): string {
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(value);
 }
 
+function formatarDuracaoSegundos(value: number): string {
+  const total = Math.max(0, Math.floor(Number(value) || 0));
+  const horas = Math.floor(total / 3600);
+  const minutos = Math.floor((total % 3600) / 60);
+  const segundos = total % 60;
+  return `${horas}h ${minutos}m ${segundos}s`;
+}
+
 function obterCampo(dados: Record<string, unknown> | null | undefined, aliases: string[]): string {
   if (!dados) return "";
   const normalizarChave = (key: string) => key.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
@@ -340,7 +348,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <StatCard label="Duração registrada" value={formatarNumero(totais.duracao)} detail="Valor original do campo de duração; unidade conforme o relatório" icon="⏱️" />
+          <StatCard label="Duração total das lives" value={formatarDuracaoSegundos(totais.duracao)} detail="Soma das durações registradas no relatório" icon="⏱️" />
           <StatCard label="Dias válidos de live" value={formatarNumero(totais.dias)} detail="Dias válidos registrados no relatório" icon="📅" />
           <StatCard label="Registros associados" value={formatarNumero(resultados.length)} detail="Linhas de relatório encontradas para o seu @" icon="📊" />
         </div>
@@ -365,7 +373,7 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {resultadosOrdenados.map((row) => {
-                  const username = obterCampo(row.dados_completos, ["username_tiktok", "tiktok_username", "creator_username", "username", "user_name", "nickname", "@username"]);
+                  const username = obterCampo(row.dados_completos, ["username_tiktok", "tiktok_username", "creator_username", "username", "user_name", "nickname", "@username", "nome do criador", "nome_criador", "nome criador"]);
                   const nome = row.nome_criador || username || row.criador_id;
                   return (
                     <tr key={`${row.streamer_id}-${row.criador_id}-${row.id}`} className="border-b border-white/5 transition hover:bg-white/[0.025]">
