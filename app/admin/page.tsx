@@ -83,6 +83,8 @@ export default function AdminPage() {
   const [erro, setErro] = useState("");
 
   const [busca, setBusca] = useState("");
+  const [paginaCriadoresAtivos, setPaginaCriadoresAtivos] = useState(1);
+  const [paginaCriadoresSaiu, setPaginaCriadoresSaiu] = useState(1);
   const [resultadoSelecionado, setResultadoSelecionado] =
     useState<Resultado | null>(null);
 
@@ -127,6 +129,11 @@ export default function AdminPage() {
    * VERIFICAÇÃO DO ADMIN
    * ============================================================
    */
+
+  useEffect(() => {
+    setPaginaCriadoresAtivos(1);
+    setPaginaCriadoresSaiu(1);
+  }, [busca, resultados]);
 
   useEffect(() => {
     setAgora(new Date());
@@ -1633,7 +1640,178 @@ export default function AdminPage() {
     });
   }, [criadoresVisiveis, busca]);
 
-  const quantidadeCriadoresFiltrados = criadoresFiltrados.length;
+  function obterStatusCriador(resultado: Resultado): string {
+    return String(
+      resultado.status ||
+      resultado.status_graduacao ||
+      resultado.status_nivel ||
+      resultado.status_fa_clube ||
+      ""
+    ).trim();
+  }
+
+  function criadorSaiuDaAgencia(resultado: Resultado): boolean {
+    const status = normalizarTexto(obterStatusCriador(resultado));
+    return (
+      status === "saiu" ||
+      status.includes("saiu") ||
+      status.includes("deixou_a_agencia") ||
+      status.includes("deixou_agencia") ||
+      status.includes("criador_saiu")
+    );
+  }
+
+  const criadoresSaiuFiltrados = useMemo(
+    () => criadoresFiltrados.filter(criadorSaiuDaAgencia),
+    [criadoresFiltrados]
+  );
+
+  const criadoresAtivosFiltrados = useMemo(
+    () => criadoresFiltrados.filter((criador) => !criadorSaiuDaAgencia(criador)),
+    [criadoresFiltrados]
+  );
+
+  const ITENS_POR_PAGINA = 20;
+  const totalPaginasAtivos = Math.max(1, Math.ceil(criadoresAtivosFiltrados.length / ITENS_POR_PAGINA));
+  const totalPaginasSaiu = Math.max(1, Math.ceil(criadoresSaiuFiltrados.length / ITENS_POR_PAGINA));
+  const criadoresAtivosPaginados = criadoresAtivosFiltrados.slice(
+    (paginaCriadoresAtivos - 1) * ITENS_POR_PAGINA,
+    paginaCriadoresAtivos * ITENS_POR_PAGINA
+  );
+  const criadoresSaiuPaginados = criadoresSaiuFiltrados.slice(
+    (paginaCriadoresSaiu - 1) * ITENS_POR_PAGINA,
+    paginaCriadoresSaiu * ITENS_POR_PAGINA
+  );
+
+  function renderPaginacaoCriadores(
+    total: number,
+    pagina: number,
+    totalPaginas: number,
+    setPagina: (pagina: number) => void
+  ) {
+    if (total <= ITENS_POR_PAGINA) return null;
+
+    const primeiro = (pagina - 1) * ITENS_POR_PAGINA + 1;
+    const ultimo = Math.min(pagina * ITENS_POR_PAGINA, total);
+
+    return (
+      <div className="flex flex-col gap-3 border-t border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-slate-400">
+          Exibindo <span className="font-semibold text-slate-200">{primeiro}–{ultimo}</span> de <span className="font-semibold text-slate-200">{formatarNumero(total)}</span> pessoas
+        </p>
+        <div className="flex items-center justify-between gap-2 sm:justify-end">
+          <button
+            type="button"
+            disabled={pagina <= 1}
+            onClick={() => setPagina(Math.max(1, pagina - 1))}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ← Anterior
+          </button>
+          <span className="whitespace-nowrap text-xs text-slate-400">
+            Página {pagina} de {totalPaginas}
+          </span>
+          <button
+            type="button"
+            disabled={pagina >= totalPaginas}
+            onClick={() => setPagina(Math.min(totalPaginas, pagina + 1))}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Próxima →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderTabelaCriadores(
+    lista: Resultado[],
+    pagina: number,
+    totalPaginas: number,
+    setPagina: (pagina: number) => void,
+    vazio: string
+  ) {
+    if (loadingResultados) {
+      return (
+        <div className="p-10 text-center">
+          <div className="mb-3 animate-pulse text-3xl">⚡</div>
+          <p className="text-slate-400">Carregando criadores...</p>
+        </div>
+      );
+    }
+
+    if (lista.length === 0) {
+      return (
+        <div className="p-10 text-center">
+          <div className="mb-3 text-3xl">📊</div>
+          <p className="font-semibold text-slate-300">{vazio}</p>
+          <p className="mt-1 text-sm text-slate-500">Tente mudar a busca ou importe outro relatório.</p>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[900px]">
+            <thead>
+              <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+                <th className="px-6 py-4">Criador</th>
+                <th className="px-6 py-4">ID do criador</th>
+                <th className="px-6 py-4">Diamantes</th>
+                <th className="px-6 py-4">Seguidores</th>
+                <th className="px-6 py-4">Batalhas</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((resultado) => {
+                const nome = obterNomeExibicaoCriador(resultado);
+                const username = obterUsernameDoRegistroCriador(resultado);
+                const status = obterStatusCriador(resultado);
+                const rowKey = resultado.id ?? `${resultado.streamer_id}-${resultado.criador_id}`;
+                const saiu = criadorSaiuDaAgencia(resultado);
+
+                return (
+                  <tr key={rowKey} className="border-b border-slate-800/70 transition hover:bg-slate-900/50">
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg ${saiu ? "bg-amber-500/10" : "bg-blue-500/10"}`}>{saiu ? "↗" : "👤"}</div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-white">{nome}</p>
+                          {username && normalizarTexto(username) !== normalizarTexto(nome) && (
+                            <p className="mt-1 text-xs text-slate-500">@{username}</p>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 text-sm text-slate-300">{resultado.criador_id || "—"}</td>
+                    <td className="px-6 py-5"><span className="font-bold text-purple-400">{formatarNumero(resultado.diamantes)}</span></td>
+                    <td className="px-6 py-5"><span className="font-semibold text-green-400">+{formatarNumero(resultado.novos_seguidores)}</span></td>
+                    <td className="px-6 py-5 text-sm text-slate-300">{formatarNumero(resultado.batalhas)}</td>
+                    <td className="px-6 py-5">
+                      {status ? (
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${saiu ? "bg-amber-500/10 text-amber-300" : "bg-green-500/10 text-green-400"}`}>{status}</span>
+                      ) : (
+                        <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-400">Importado</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      <button onClick={() => setResultadoSelecionado(resultado)} className="rounded-xl bg-blue-600/20 px-4 py-2 text-xs font-semibold text-blue-400 transition hover:bg-blue-600 hover:text-white">
+                        Ver detalhes →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {renderPaginacaoCriadores(lista.length, pagina, totalPaginas, setPagina)}
+      </>
+    );
+  }
 
   const rankingCriadores = useMemo(() => {
     return criadoresVisiveis.slice(0, 5).map((resultado) => ({
@@ -2927,23 +3105,21 @@ export default function AdminPage() {
 
         </div>
 
-        {/* LISTA ÚNICA DE CRIADORES */}
-
-        <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
+        {/* CRIADORES ATIVOS / IMPORTADOS */}
+        <div className="mb-8 overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
           <div className="border-b border-slate-800 px-6 py-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="flex items-center gap-3">
-                  <h3 className="text-xl font-bold">👥 Todos os criadores</h3>
+                  <h3 className="text-xl font-bold">👥 Criadores ativos / importados</h3>
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
-                    {formatarNumero(quantidadeCriadoresFiltrados)}
+                    {formatarNumero(criadoresAtivosFiltrados.length)}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-slate-400">
-                  Todos os criadores dos relatórios ficam nesta lista única, com seus indicadores e detalhes.
+                  Criadores que não estão marcados como “Saiu”. Mostrando até 20 por página.
                 </p>
               </div>
-
               <input
                 type="text"
                 value={busca}
@@ -2953,98 +3129,41 @@ export default function AdminPage() {
               />
             </div>
           </div>
+          {renderTabelaCriadores(
+            criadoresAtivosPaginados,
+            paginaCriadoresAtivos,
+            totalPaginasAtivos,
+            setPaginaCriadoresAtivos,
+            "Nenhum criador ativo/importado encontrado."
+          )}
+        </div>
 
-          {loadingResultados ? (
-            <div className="p-12 text-center">
-              <div className="mb-3 animate-pulse text-3xl">⚡</div>
-              <p className="text-slate-400">Carregando criadores...</p>
+        {/* CRIADORES QUE SAÍRAM */}
+        <div className="overflow-hidden rounded-3xl border border-amber-500/20 bg-[#0b1224]">
+          <div className="border-b border-slate-800 px-6 py-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xl font-bold">↗ Criadores que saíram da agência</h3>
+                  <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300">
+                    {formatarNumero(criadoresSaiuFiltrados.length)}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">
+                  Registros com status “Saiu”, separados para facilitar a organização. A busca acima filtra as duas tabelas.
+                </p>
+              </div>
+              <span className="whitespace-nowrap rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400">
+                20 pessoas por página
+              </span>
             </div>
-          ) : criadoresFiltrados.length === 0 ? (
-            <div className="p-12 text-center">
-              <div className="mb-3 text-4xl">📊</div>
-              <p className="font-semibold text-slate-300">Nenhum criador encontrado.</p>
-              <p className="mt-1 text-sm text-slate-500">
-                Importe um relatório para que todos os criadores apareçam aqui.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px]">
-                <thead>
-                  <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
-                    <th className="px-6 py-4">Criador</th>
-                    <th className="px-6 py-4">ID do criador</th>
-                    <th className="px-6 py-4">Diamantes</th>
-                    <th className="px-6 py-4">Seguidores</th>
-                    <th className="px-6 py-4">Batalhas</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {criadoresFiltrados.map((resultado) => {
-                    const nome = obterNomeExibicaoCriador(resultado);
-                    const username = obterUsernameDoRegistroCriador(resultado);
-                    const status = resultado.status || resultado.status_graduacao || resultado.status_nivel || resultado.status_fa_clube;
-                    const rowKey = resultado.id ?? `${resultado.streamer_id}-${resultado.criador_id}`;
-
-                    return (
-                      <tr
-                        key={rowKey}
-                        className="border-b border-slate-800/70 transition hover:bg-slate-900/50"
-                      >
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-lg">👤</div>
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-white">{nome}</p>
-                              {username && normalizarTexto(username) !== normalizarTexto(nome) && (
-                                <p className="mt-1 text-xs text-slate-500">@{username}</p>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-5 text-sm text-slate-300">
-                          {resultado.criador_id || "—"}
-                        </td>
-                        <td className="px-6 py-5">
-                          <span className="font-bold text-purple-400">
-                            {formatarNumero(resultado.diamantes)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-5">
-                          <span className="font-semibold text-green-400">
-                            +{formatarNumero(resultado.novos_seguidores)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-5 text-sm text-slate-300">
-                          {formatarNumero(resultado.batalhas)}
-                        </td>
-                        <td className="px-6 py-5">
-                          {status ? (
-                            <span className="rounded-full bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
-                              {String(status)}
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-400">
-                              Importado
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-5 text-right">
-                          <button
-                            onClick={() => setResultadoSelecionado(resultado)}
-                            className="rounded-xl bg-blue-600/20 px-4 py-2 text-xs font-semibold text-blue-400 transition hover:bg-blue-600 hover:text-white"
-                          >
-                            Ver detalhes →
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          </div>
+          {renderTabelaCriadores(
+            criadoresSaiuPaginados,
+            paginaCriadoresSaiu,
+            totalPaginasSaiu,
+            setPaginaCriadoresSaiu,
+            "Nenhum criador marcado como saiu."
           )}
         </div>
 
