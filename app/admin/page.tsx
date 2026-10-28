@@ -12,12 +12,6 @@ type Streamer = {
   created_at: string;
 };
 
-type StreamerVisivel = Streamer & {
-  grupoRelatorio: string | null;
-  dados: Resultado[];
-  resultadoPrincipal: Resultado;
-};
-
 type Resultado = {
   id?: number;
   streamer_id: string;
@@ -251,57 +245,62 @@ export default function AdminPage() {
   async function carregarResultados() {
     setLoadingResultados(true);
 
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("resultados_streamers")
-      .select(`
-        id,
-        streamer_id,
-        criador_id,
-        nome_criador,
-        grupo,
-        agente,
-        diamantes,
-        duracao_live,
-        dias_validos_live,
-        novos_seguidores,
-        transmissoes,
-        batalhas,
-        diamantes_batalhas,
-        diamantes_convidados,
-        status_graduacao,
-        status_nivel,
-        status_fa_clube,
-        status,
-        dados_completos,
-        data_importacao,
-        created_at,
-        updated_at
-      `)
-      .order("diamantes", {
-        ascending: false,
-      });
+    try {
+      const todosResultados: Resultado[] = [];
+      const tamanhoPagina = 1000;
+      let inicio = 0;
 
-    if (error) {
-      console.error(
-        "Erro ao carregar resultados:",
-        error
-      );
+      while (true) {
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("resultados_streamers")
+          .select(`
+            id,
+            streamer_id,
+            criador_id,
+            nome_criador,
+            grupo,
+            agente,
+            diamantes,
+            duracao_live,
+            dias_validos_live,
+            novos_seguidores,
+            transmissoes,
+            batalhas,
+            diamantes_batalhas,
+            diamantes_convidados,
+            status_graduacao,
+            status_nivel,
+            status_fa_clube,
+            status,
+            dados_completos,
+            data_importacao,
+            created_at,
+            updated_at
+          `)
+          .order("diamantes", { ascending: false })
+          .order("id", { ascending: true })
+          .range(inicio, inicio + tamanhoPagina - 1);
 
-      setErro(
-        `Erro ao carregar resultados: ${error.message}`
-      );
+        if (error) {
+          console.error("Erro ao carregar resultados:", error);
+          setErro(`Erro ao carregar resultados: ${error.message}`);
+          return;
+        }
 
+        const pagina = data || [];
+        todosResultados.push(...pagina);
+
+        if (pagina.length < tamanhoPagina) break;
+        inicio += tamanhoPagina;
+      }
+
+      setResultados(todosResultados);
+    } finally {
       setLoadingResultados(false);
-
-      return;
     }
-
-    setResultados(data || []);
-
-    setLoadingResultados(false);
   }
 
   /*
@@ -816,6 +815,62 @@ export default function AdminPage() {
     return String(valor ?? "")
       .trim()
       .replace(/^@+/, "");
+  }
+
+
+  /** Identidade do criador presente no relatório, sem fallback para a conta ADM. */
+  function obterUsernameDoRegistroCriador(
+    resultado: Resultado
+  ): string {
+    const valor = encontrarColuna(
+      resultado.dados_completos || {},
+      [
+        "username_tiktok",
+        "username tiktok",
+        "tiktok_username",
+        "tiktok username",
+        "creator_username",
+        "creator username",
+        "username",
+        "user_name",
+        "nickname",
+        "@username",
+      ]
+    );
+
+    return String(valor ?? "")
+      .trim()
+      .replace(/^@+/, "");
+  }
+
+  function obterNomeExibicaoCriador(
+    resultado: Resultado
+  ): string {
+    const nomeSalvo = String(resultado.nome_criador ?? "").trim();
+    if (nomeSalvo) return nomeSalvo;
+
+    const dados = resultado.dados_completos || {};
+    const nomeRelatorio = encontrarColuna(dados, [
+      "nome_criador",
+      "nome do criador",
+      "creator_name",
+      "creator name",
+      "display_name",
+      "display name",
+      "nickname",
+      "nome",
+      "name",
+      "criador",
+    ]);
+
+    if (nomeRelatorio !== null && nomeRelatorio !== undefined && String(nomeRelatorio).trim()) {
+      return String(nomeRelatorio).trim();
+    }
+
+    const username = obterUsernameDoRegistroCriador(resultado);
+    if (username) return `@${username}`;
+
+    return `Criador ${resultado.criador_id || "sem ID"}`;
   }
 
   /*
@@ -1466,108 +1521,52 @@ export default function AdminPage() {
 
   /*
    * ============================================================
-   * STREAMERS VISÍVEIS
+   * CRIADORES IMPORTADOS
    * ============================================================
-   * Esta lista representa somente contas cadastradas na tabela
-   * "streamers". Os registros em "resultados_streamers" são
-   * resultados/creators importados e nunca criam novas contas.
-   * Cada conta recebe os resultados que estão vinculados ao seu
-   * streamer_id. Nenhum dado é alterado no Supabase aqui.
+   * A área principal do painel mostra todas as linhas de criadores
+   * importadas de resultados_streamers, em uma lista única. A tabela
+   * streamers continua servindo somente ao gerenciamento de contas e
+   * agrupamentos; ela não limita mais quais criadores aparecem aqui.
    */
-  const streamersVisiveis = useMemo<StreamerVisivel[]>(() => {
-    return streamers
-      .map((streamer) => {
-        const dados = resultados.filter(
-          (resultado) => resultado.streamer_id === streamer.id
-        );
+  const criadoresVisiveis = useMemo(() => {
+    return [...resultados].sort(
+      (a, b) => (Number(b.diamantes) || 0) - (Number(a.diamantes) || 0)
+    );
+  }, [resultados]);
 
-        const resultadoPrincipal =
-          dados.reduce<Resultado | null>((principal, atual) => {
-            if (!principal) return atual;
+  const criadoresFiltrados = useMemo(() => {
+    const termo = normalizarTexto(busca).replace(/^@+/, "");
+    if (!termo) return criadoresVisiveis;
 
-            return (Number(atual.diamantes) || 0) >
-              (Number(principal.diamantes) || 0)
-              ? atual
-              : principal;
-          }, null) || {
-            streamer_id: streamer.id,
-            criador_id: "",
-            nome_criador: null,
-            grupo: null,
-            agente: null,
-            diamantes: 0,
-            novos_seguidores: 0,
-            transmissoes: 0,
-            batalhas: 0,
-            dados_completos: {},
-          };
+    return criadoresVisiveis.filter((resultado) => {
+      const username = obterUsernameDoRegistroCriador(resultado);
+      const nome = obterNomeExibicaoCriador(resultado);
+      const valoresExtras = [
+        resultado.criador_id,
+        resultado.grupo,
+        resultado.agente,
+        resultado.status,
+        resultado.status_graduacao,
+        resultado.status_nivel,
+        resultado.status_fa_clube,
+      ];
 
-        return {
-          ...streamer,
-          // O nome de grupo exibido vem do agrupamento administrativo.
-          grupoRelatorio: null,
-          dados,
-          resultadoPrincipal,
-        };
-      })
-      .sort((a, b) =>
-        a.username_tiktok.localeCompare(b.username_tiktok)
-      );
-  }, [streamers, resultados]);
-
-  const streamersFiltrados = useMemo(() => {
-    const termo = busca.trim().toLowerCase().replace(/^@/, "");
-
-    if (!termo) {
-      return streamersVisiveis;
-    }
-
-    return streamersVisiveis.filter((streamer) => {
-      const grupo = obterGrupoDoStreamer(streamer.id)?.nome || "";
-      return (
-        normalizarUsername(streamer.username_tiktok).includes(termo) ||
-        grupo.toLowerCase().includes(termo)
-      );
+      return [nome, username, ...valoresExtras]
+        .some((valor) => normalizarTexto(valor).includes(termo));
     });
-  }, [streamersVisiveis, busca, grupos]);
+  }, [criadoresVisiveis, busca]);
 
-  const quantidadeStreamersFiltrados = streamersFiltrados.length;
+  const quantidadeCriadoresFiltrados = criadoresFiltrados.length;
 
-  /*
-   * ============================================================
-   * RANKING
-   * ============================================================
-   */
-
-  const rankingStreamers = useMemo(() => {
-    return streamersVisiveis
-      .map((streamer) => {
-        const grupo = obterGrupoDoStreamer(streamer.id);
-        const dados = grupo
-          ? resultadosDoGrupo(streamer.id)
-          : streamer.dados;
-
-        return {
-          streamer,
-          grupo,
-          diamantes: dados.reduce(
-            (total, item) => total + (Number(item.diamantes) || 0),
-            0
-          ),
-          seguidores: dados.reduce(
-            (total, item) =>
-              total + (Number(item.novos_seguidores) || 0),
-            0
-          ),
-          batalhas: dados.reduce(
-            (total, item) => total + (Number(item.batalhas) || 0),
-            0
-          ),
-          criadores: dados.length,
-        };
-      })
-      .sort((a, b) => b.diamantes - a.diamantes);
-  }, [streamersVisiveis, resultados, grupos, streamers]);
+  const rankingCriadores = useMemo(() => {
+    return criadoresVisiveis.slice(0, 5).map((resultado) => ({
+      resultado,
+      nome: obterNomeExibicaoCriador(resultado),
+      diamantes: Number(resultado.diamantes) || 0,
+      seguidores: Number(resultado.novos_seguidores) || 0,
+      batalhas: Number(resultado.batalhas) || 0,
+    }));
+  }, [criadoresVisiveis]);
 
   /*
    * ============================================================
@@ -2040,10 +2039,8 @@ export default function AdminPage() {
               </h2>
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-                Visão geral da agência,
-                desempenho dos streamers,
-                importações e contas
-                agrupadas.
+                Visão geral da agência, desempenho de todos os criadores,
+                resultados importados e contas agrupadas.
               </p>
 
             </div>
@@ -2070,11 +2067,11 @@ export default function AdminPage() {
 
           <MetricCard
             icon="👥"
-            title="Streamers"
+            title="Criadores"
             value={formatarNumero(
-              streamersVisiveis.length
+              criadoresVisiveis.length
             )}
-            subtitle={`${grupos.length} grupo(s) criado(s)`}
+            subtitle="Total importado"
             accent="blue"
           />
 
@@ -2305,252 +2302,124 @@ export default function AdminPage() {
 
         </div>
 
-        {/* RANKING */}
+        {/* RANKING DE CRIADORES */}
 
         <div className="mb-8 grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
 
           <div className="rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
 
             <div className="mb-6 flex items-center justify-between">
-
               <div>
-
                 <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
                   Ranking
                 </p>
-
                 <h3 className="mt-1 text-2xl font-bold">
-                  Desempenho dos streamers
+                  Desempenho dos criadores
                 </h3>
-
               </div>
-
               <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-bold text-blue-400">
-                Top{" "}
-                {Math.min(
-                  rankingStreamers.length,
-                  5
-                )}
+                Top {Math.min(criadoresVisiveis.length, 5)}
               </span>
-
             </div>
 
             <div className="space-y-3">
+              {rankingCriadores.map((item, index) => {
+                const maior = rankingCriadores[0]?.diamantes || 1;
+                const largura = (item.diamantes / maior) * 100;
 
-              {rankingStreamers
-                .slice(0, 5)
-                .map(
-                  (
-                    item,
-                    index
-                  ) => {
-
-                    const maior =
-                      rankingStreamers[0]
-                        ?.diamantes ||
-                      1;
-
-                    const largura =
-                      (item.diamantes /
-                        maior) *
-                      100;
-
-                    return (
-                      <div
-                        key={
-                          item.streamer
-                            .id
-                        }
-                        className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
-                      >
-
-                        <div className="mb-3 flex items-center justify-between gap-4">
-
-                          <div className="flex min-w-0 items-center gap-3">
-
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-sm font-bold">
-                              {index + 1}
-                            </div>
-
-                            <div className="min-w-0">
-
-                              <p className="truncate font-bold">
-                                @
-                                {
-                                  item
-                                    .streamer
-                                    .username_tiktok
-                                }
-                              </p>
-
-                              {item.grupo && (
-                                <p className="text-[11px] text-purple-400">
-                                  🔗{" "}
-                                  {
-                                    item
-                                      .grupo
-                                      .nome
-                                  }
-                                </p>
-                              )}
-
-                            </div>
-
-                          </div>
-
-                          <div className="text-right">
-
-                            <p className="font-bold text-purple-400">
-                              {formatarNumero(
-                                item.diamantes
-                              )}
-                            </p>
-
-                            <p className="text-[11px] text-slate-500">
-                              {formatarNumero(
-                                item.criadores
-                              )}{" "}
-                              criadores
-                            </p>
-
-                          </div>
-
+                return (
+                  <div
+                    key={item.resultado.id ?? `${item.resultado.streamer_id}-${item.resultado.criador_id}`}
+                    className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-sm font-bold">
+                          {index + 1}
                         </div>
-
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-blue-600 to-purple-500 transition-all duration-700"
-                            style={{
-                              width: `${Math.max(
-                                largura,
-                                item.diamantes
-                                  ? 3
-                                  : 0
-                              )}%`,
-                            }}
-                          />
-
+                        <div className="min-w-0">
+                          <p className="truncate font-bold">{item.nome}</p>
+                          <p className="text-[11px] text-slate-500">
+                            ID: {item.resultado.criador_id || "—"}
+                          </p>
                         </div>
-
-                        <div className="mt-2 flex justify-between text-[11px] text-slate-500">
-
-                          <span>
-                            +{" "}
-                            {formatarNumero(
-                              item.seguidores
-                            )}{" "}
-                            seguidores
-                          </span>
-
-                          <span>
-                            ⚔️{" "}
-                            {formatarNumero(
-                              item.batalhas
-                            )}
-                          </span>
-
-                        </div>
-
                       </div>
-                    );
-                  }
-                )}
+                      <div className="text-right">
+                        <p className="font-bold text-purple-400">
+                          {formatarNumero(item.diamantes)}
+                        </p>
+                        <p className="text-[11px] text-slate-500">diamantes</p>
+                      </div>
+                    </div>
 
-              {rankingStreamers.length ===
-                0 && (
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-blue-600 to-purple-500 transition-all duration-700"
+                        style={{ width: `${Math.max(largura, item.diamantes ? 3 : 0)}%` }}
+                      />
+                    </div>
+
+                    <div className="mt-2 flex justify-between text-[11px] text-slate-500">
+                      <span>+ {formatarNumero(item.seguidores)} seguidores</span>
+                      <span>⚔️ {formatarNumero(item.batalhas)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {rankingCriadores.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-700 p-10 text-center text-slate-500">
-                  Nenhum streamer cadastrado.
+                  Nenhum criador importado ainda.
                 </div>
               )}
-
             </div>
-
           </div>
 
-          {/* RESUMO */}
-
           <div className="rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
-
             <p className="text-xs font-bold uppercase tracking-widest text-purple-400">
               Resumo
             </p>
-
-            <h3 className="mt-1 text-2xl font-bold">
-              Visão da agência
-            </h3>
+            <h3 className="mt-1 text-2xl font-bold">Visão da agência</h3>
 
             <div className="mt-6 space-y-4">
-
               <SummaryRow
-                label="Streamers"
-                value={
-                  streamersVisiveis.length
-                }
-                icon="🎥"
+                label="Criadores"
+                value={criadoresVisiveis.length}
+                icon="👤"
               />
-
               <SummaryRow
                 label="Grupos de contas"
-                value={
-                  grupos.length
-                }
+                value={grupos.length}
                 icon="🔗"
               />
-
               <SummaryRow
                 label="Transmissões"
-                value={
-                  totalTransmissoes
-                }
+                value={totalTransmissoes}
                 icon="📡"
               />
-
               <SummaryRow
                 label="Batalhas"
-                value={
-                  totalBatalhas
-                }
+                value={totalBatalhas}
                 icon="⚔️"
               />
-
             </div>
 
             <div className="mt-6 rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4">
-
-              <p className="text-xs text-slate-500">
-                Maior streamer
-              </p>
-
-              {rankingStreamers[0] ? (
+              <p className="text-xs text-slate-500">Criador com mais diamantes</p>
+              {rankingCriadores[0] ? (
                 <>
                   <p className="mt-1 text-lg font-bold">
-                    @
-                    {
-                      rankingStreamers[0]
-                        .streamer
-                        .username_tiktok
-                    }
+                    {rankingCriadores[0].nome}
                   </p>
-
                   <p className="mt-1 text-sm text-purple-400">
-                    💎{" "}
-                    {formatarNumero(
-                      rankingStreamers[0]
-                        .diamantes
-                    )}
+                    💎 {formatarNumero(rankingCriadores[0].diamantes)}
                   </p>
                 </>
               ) : (
-                <p className="mt-1 text-slate-500">
-                  Sem dados
-                </p>
+                <p className="mt-1 text-slate-500">Sem dados</p>
               )}
-
             </div>
-
           </div>
-
         </div>
 
         {/* AGRUPAMENTO */}
@@ -2860,7 +2729,7 @@ export default function AdminPage() {
 
                 <p className="mt-1 text-sm text-slate-400">
                   Envie o relatório exportado do TikTok.
-                  O sistema usa o username_tiktok do arquivo para identificar cada streamer automaticamente.
+                  Todos os criadores do relatório serão exibidos juntos nesta lista, com os indicadores importados.
                 </p>
 
               </div>
@@ -2981,252 +2850,125 @@ export default function AdminPage() {
 
         </div>
 
-        {/* STREAMERS */}
+        {/* LISTA ÚNICA DE CRIADORES */}
 
         <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
-
           <div className="border-b border-slate-800 px-6 py-5">
-
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-
               <div>
-
                 <div className="flex items-center gap-3">
-
-                  <h3 className="text-xl font-bold">
-                    🎥 Streamers
-                  </h3>
-
+                  <h3 className="text-xl font-bold">👥 Todos os criadores</h3>
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
-                    {
-                      quantidadeStreamersFiltrados
-                    }
+                    {formatarNumero(quantidadeCriadoresFiltrados)}
                   </span>
-
                 </div>
-
                 <p className="mt-1 text-sm text-slate-400">
-                  Cada linha representa uma conta cadastrada na plataforma.
+                  Todos os criadores dos relatórios ficam nesta lista única, com seus indicadores e detalhes.
                 </p>
-
               </div>
 
               <input
                 type="text"
-                value={
-                  busca
-                }
-                onChange={(
-                  event
-                ) =>
-                  setBusca(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder="Pesquisar streamer..."
+                value={busca}
+                onChange={(event) => setBusca(event.target.value)}
+                placeholder="Pesquisar criador, usuário ou ID..."
                 className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500 lg:w-80"
               />
-
             </div>
-
           </div>
 
           {loadingResultados ? (
-
             <div className="p-12 text-center">
-
-              <div className="mb-3 animate-pulse text-3xl">
-                ⚡
-              </div>
-
-              <p className="text-slate-400">
-                Carregando resultados...
-              </p>
-
+              <div className="mb-3 animate-pulse text-3xl">⚡</div>
+              <p className="text-slate-400">Carregando criadores...</p>
             </div>
-
-          ) : streamersFiltrados.length ===
-            0 ? (
-
+          ) : criadoresFiltrados.length === 0 ? (
             <div className="p-12 text-center">
-
-              <div className="mb-3 text-4xl">
-                📊
-              </div>
-
-              <p className="font-semibold text-slate-300">
-                Nenhum resultado encontrado.
-              </p>
-
+              <div className="mb-3 text-4xl">📊</div>
+              <p className="font-semibold text-slate-300">Nenhum criador encontrado.</p>
               <p className="mt-1 text-sm text-slate-500">
-                Importe um relatório para começar.
+                Importe um relatório para que todos os criadores apareçam aqui.
               </p>
-
             </div>
-
           ) : (
-
             <div className="overflow-x-auto">
-
               <table className="w-full min-w-[900px]">
-
                 <thead>
-
                   <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
-
-                    <th className="px-6 py-4">
-                      Streamer
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Grupo
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Diamantes
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Seguidores
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Batalhas
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Status
-                    </th>
-
-                    <th className="px-6 py-4 text-right">
-                      Ação
-                    </th>
-
+                    <th className="px-6 py-4">Criador</th>
+                    <th className="px-6 py-4">ID do criador</th>
+                    <th className="px-6 py-4">Diamantes</th>
+                    <th className="px-6 py-4">Seguidores</th>
+                    <th className="px-6 py-4">Batalhas</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Ação</th>
                   </tr>
-
                 </thead>
-
                 <tbody>
-
-                  {streamersFiltrados.map((streamer) => {
-                    const dados = streamer.dados;
-                    const principal = streamer.resultadoPrincipal;
-
-                    const diamantes = dados.reduce(
-                      (total, item) =>
-                        total + (Number(item.diamantes) || 0),
-                      0
-                    );
-
-                    const seguidores = dados.reduce(
-                      (total, item) =>
-                        total + (Number(item.novos_seguidores) || 0),
-                      0
-                    );
-
-                    const batalhas = dados.reduce(
-                      (total, item) =>
-                        total + (Number(item.batalhas) || 0),
-                      0
-                    );
-
-                    const grupoCadastrado =
-                      streamer.id.startsWith("virtual:")
-                        ? undefined
-                        : obterGrupoDoStreamer(streamer.id);
-
-                    const nomeGrupo = grupoCadastrado?.nome || null;
+                  {criadoresFiltrados.map((resultado) => {
+                    const nome = obterNomeExibicaoCriador(resultado);
+                    const username = obterUsernameDoRegistroCriador(resultado);
+                    const status = resultado.status || resultado.status_graduacao || resultado.status_nivel || resultado.status_fa_clube;
+                    const rowKey = resultado.id ?? `${resultado.streamer_id}-${resultado.criador_id}`;
 
                     return (
                       <tr
-                        key={streamer.id}
+                        key={rowKey}
                         className="border-b border-slate-800/70 transition hover:bg-slate-900/50"
                       >
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-lg">
-                              🎥
-                            </div>
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-lg">👤</div>
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-white">
-                                @{streamer.username_tiktok.replace(/^@+/, "")}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {dados.length > 0
-                                  ? `${formatarNumero(dados.length)} registro(s) importado(s)`
-                                  : "Sem relatório importado"}
-                              </p>
+                              <p className="truncate text-sm font-bold text-white">{nome}</p>
+                              {username && normalizarTexto(username) !== normalizarTexto(nome) && (
+                                <p className="mt-1 text-xs text-slate-500">@{username}</p>
+                              )}
                             </div>
                           </div>
                         </td>
-
-                        <td className="px-6 py-5">
-                          {nomeGrupo ? (
-                            <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-400">
-                              🔗 {nomeGrupo}
-                            </span>
-                          ) : (
-                            <span className="text-sm text-slate-500">
-                              Sem grupo
-                            </span>
-                          )}
+                        <td className="px-6 py-5 text-sm text-slate-300">
+                          {resultado.criador_id || "—"}
                         </td>
-
                         <td className="px-6 py-5">
                           <span className="font-bold text-purple-400">
-                            {formatarNumero(diamantes)}
+                            {formatarNumero(resultado.diamantes)}
                           </span>
                         </td>
-
                         <td className="px-6 py-5">
                           <span className="font-semibold text-green-400">
-                            +{formatarNumero(seguidores)}
+                            +{formatarNumero(resultado.novos_seguidores)}
                           </span>
                         </td>
-
                         <td className="px-6 py-5 text-sm text-slate-300">
-                          {formatarNumero(batalhas)}
+                          {formatarNumero(resultado.batalhas)}
                         </td>
-
                         <td className="px-6 py-5">
-                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            dados.length > 0
-                              ? "bg-green-500/10 text-green-400"
-                              : "bg-slate-500/10 text-slate-400"
-                          }`}>
-                            {dados.length > 0 ? "Importado" : "Sem dados"}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-5 text-right">
-                          {dados.length > 0 ? (
-                            <button
-                              onClick={() =>
-                                setResultadoSelecionado(principal)
-                              }
-                              className="rounded-xl bg-blue-600/20 px-4 py-2 text-xs font-semibold text-blue-400 transition hover:bg-blue-600 hover:text-white"
-                            >
-                              Ver detalhes →
-                            </button>
+                          {status ? (
+                            <span className="rounded-full bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
+                              {String(status)}
+                            </span>
                           ) : (
-                            <span className="text-xs text-slate-600">
-                              —
+                            <span className="rounded-full bg-slate-500/10 px-3 py-1 text-xs font-semibold text-slate-400">
+                              Importado
                             </span>
                           )}
+                        </td>
+                        <td className="px-6 py-5 text-right">
+                          <button
+                            onClick={() => setResultadoSelecionado(resultado)}
+                            className="rounded-xl bg-blue-600/20 px-4 py-2 text-xs font-semibold text-blue-400 transition hover:bg-blue-600 hover:text-white"
+                          >
+                            Ver detalhes →
+                          </button>
                         </td>
                       </tr>
                     );
                   })}
-
                 </tbody>
-
               </table>
-
             </div>
-
           )}
-
         </div>
 
       </section>
@@ -3648,8 +3390,7 @@ export default function AdminPage() {
 
                 <h2 className="mt-1 text-2xl font-bold">
                   {
-                    resultadoSelecionado.nome_criador ||
-                    "Criador sem nome"
+                    obterNomeExibicaoCriador(resultadoSelecionado)
                   }
                 </h2>
 
@@ -3748,17 +3489,15 @@ export default function AdminPage() {
                   />
 
                   <Info
-                    titulo="Streamer"
+                    titulo="Usuário TikTok"
                     valor={
-                      obterUsernameTikTokResultado(
+                      obterUsernameDoRegistroCriador(
                         resultadoSelecionado
                       )
-                        ? `@${obterUsernameTikTokResultado(
+                        ? `@${obterUsernameDoRegistroCriador(
                             resultadoSelecionado
                           )}`
-                        : nomeStreamer(
-                            resultadoSelecionado.streamer_id
-                          )
+                        : "—"
                     }
                   />
 
