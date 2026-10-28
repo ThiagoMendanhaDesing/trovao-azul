@@ -1216,7 +1216,7 @@ export default function AdminPage() {
       );
 
       setMensagem(
-        `Importação concluída! ${resultadosUnicos.length} criadores foram processados com sucesso.`
+        `Importação concluída! ${resultadosUnicos.length} registros foram processados com sucesso.`
       );
     } catch (
       error: any
@@ -1295,9 +1295,35 @@ export default function AdminPage() {
       streamers,
     ]);
 
-  const quantidadeStreamersFiltrados =
+  /*
+   * ============================================================
+   * STREAMERS DA TABELA
+   * ============================================================
+   *
+   * IMPORTANTE:
+   * A tabela principal do ADM representa os streamers encontrados
+   * nos relatórios, e NÃO somente as contas cadastradas em
+   * "streamers".
+   *
+   * Cada username_tiktok diferente do resultados_streamers vira
+   * uma linha. Se houver mais de um registro para o mesmo username,
+   * as métricas são consolidadas.
+   */
+  const streamersTabela =
     useMemo(() => {
-      const unicos = new Set<string>();
+      type LinhaStreamer = {
+        username: string;
+        grupo: StreamerGroup | null;
+        grupoNome: string | null;
+        diamantes: number;
+        seguidores: number;
+        batalhas: number;
+        transmissoes: number;
+        resultado: Resultado;
+      };
+
+      const mapa =
+        new Map<string, LinhaStreamer>();
 
       for (const resultado of resultadosFiltrados) {
         const username =
@@ -1305,20 +1331,138 @@ export default function AdminPage() {
             resultado
           );
 
-        if (username) {
-          unicos.add(
-            normalizarUsername(
-              username
-            )
+        if (!username) {
+          continue;
+        }
+
+        const chave =
+          normalizarUsername(
+            username
           );
+
+        const existente =
+          mapa.get(chave);
+
+        const grupoAtual =
+          obterGrupoDoResultado(
+            resultado
+          );
+
+        const grupoNomeDoRelatorio =
+          resultado.grupo?.trim() ||
+          null;
+
+        if (!existente) {
+          mapa.set(
+            chave,
+            {
+              username:
+                username.replace(
+                  /^@+/,
+                  ""
+                ),
+              grupo:
+                grupoAtual || null,
+              grupoNome:
+                grupoAtual?.nome ||
+                grupoNomeDoRelatorio,
+              diamantes:
+                Number(
+                  resultado.diamantes
+                ) || 0,
+              seguidores:
+                Number(
+                  resultado.novos_seguidores
+                ) || 0,
+              batalhas:
+                Number(
+                  resultado.batalhas
+                ) || 0,
+              transmissoes:
+                Number(
+                  resultado.transmissoes
+                ) || 0,
+              resultado,
+            }
+          );
+
+          continue;
+        }
+
+        existente.diamantes +=
+          Number(
+            resultado.diamantes
+          ) || 0;
+
+        existente.seguidores +=
+          Number(
+            resultado.novos_seguidores
+          ) || 0;
+
+        existente.batalhas +=
+          Number(
+            resultado.batalhas
+          ) || 0;
+
+        existente.transmissoes +=
+          Number(
+            resultado.transmissoes
+          ) || 0;
+
+        if (
+          !existente.grupo &&
+          grupoAtual
+        ) {
+          existente.grupo =
+            grupoAtual;
+          existente.grupoNome =
+            grupoAtual.nome;
+        } else if (
+          !existente.grupoNome &&
+          grupoNomeDoRelatorio
+        ) {
+          existente.grupoNome =
+            grupoNomeDoRelatorio;
+        }
+
+        /*
+         * Mantém o registro mais recente como
+         * referência para o botão "Ver detalhes".
+         */
+        const dataExistente =
+          existente.resultado.data_importacao ||
+          existente.resultado.created_at ||
+          "";
+
+        const dataAtual =
+          resultado.data_importacao ||
+          resultado.created_at ||
+          "";
+
+        if (
+          dataAtual >
+          dataExistente
+        ) {
+          existente.resultado =
+            resultado;
         }
       }
 
-      return unicos.size;
+      return Array.from(
+        mapa.values()
+      ).sort(
+        (a, b) =>
+          b.diamantes -
+          a.diamantes
+      );
     }, [
       resultadosFiltrados,
       streamers,
+      grupos,
     ]);
+
+  const quantidadeStreamersFiltrados =
+    streamersTabela.length;
 
   /*
    * ============================================================
@@ -2636,7 +2780,7 @@ export default function AdminPage() {
               {rankingStreamers.length ===
                 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-700 p-10 text-center text-slate-500">
-                  Nenhum streamer cadastrado.
+                  Nenhum streamer encontrado nos relatórios.
                 </div>
               )}
 
@@ -2675,11 +2819,11 @@ export default function AdminPage() {
               />
 
               <SummaryRow
-                label="Criadores"
+                label="Registros importados"
                 value={
                   resultados.length
                 }
-                icon="👤"
+                icon="📄"
               />
 
               <SummaryRow
@@ -3230,7 +3374,7 @@ export default function AdminPage() {
 
             </div>
 
-          ) : resultadosFiltrados.length ===
+          ) : streamersTabela.length ===
             0 ? (
 
             <div className="p-12 text-center">
@@ -3293,24 +3437,16 @@ export default function AdminPage() {
 
                 <tbody>
 
-                  {resultadosFiltrados.map(
+                  {streamersTabela.map(
                     (
-                      resultado
+                      item
                     ) => {
-
-                      const grupo =
-                        obterGrupoDoResultado(
-                          resultado
-                        );
-
-                      const usernameTikTok =
-                        obterUsernameTikTokResultado(
-                          resultado
-                        );
+                      const resultado =
+                        item.resultado;
 
                       return (
                         <tr
-                          key={`${resultado.streamer_id}-${resultado.criador_id}`}
+                          key={`streamer-${normalizarUsername(item.username)}`}
                           className="border-b border-slate-800/70 transition hover:bg-slate-900/50"
                         >
 
@@ -3324,13 +3460,11 @@ export default function AdminPage() {
 
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-bold text-white">
-                                  @
-                                  {usernameTikTok || "sem_username"}
+                                  @{item.username}
                                 </p>
 
                                 <p className="mt-1 text-xs text-slate-500">
-                                  Criador ID:{" "}
-                                  {resultado.criador_id}
+                                  Streamer encontrado no relatório
                                 </p>
                               </div>
 
@@ -3340,21 +3474,15 @@ export default function AdminPage() {
 
                           <td className="px-6 py-5">
 
-                            {grupo ? (
-
+                            {item.grupoNome ? (
                               <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-400">
                                 🔗{" "}
-                                {
-                                  grupo.nome
-                                }
+                                {item.grupoNome}
                               </span>
-
                             ) : (
-
                               <span className="text-sm text-slate-500">
                                 —
                               </span>
-
                             )}
 
                           </td>
@@ -3364,7 +3492,7 @@ export default function AdminPage() {
                             <span className="font-bold text-purple-400">
                               {
                                 formatarNumero(
-                                  resultado.diamantes
+                                  item.diamantes
                                 )
                               }
                             </span>
@@ -3377,7 +3505,7 @@ export default function AdminPage() {
                               +
                               {
                                 formatarNumero(
-                                  resultado.novos_seguidores
+                                  item.seguidores
                                 )
                               }
                             </span>
@@ -3388,7 +3516,7 @@ export default function AdminPage() {
 
                             {
                               formatarNumero(
-                                resultado.batalhas
+                                item.batalhas
                               )
                             }
 
