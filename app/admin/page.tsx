@@ -1,4 +1,4 @@
-"use client";
+  "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -682,6 +682,58 @@ export default function AdminPage() {
     );
   }
 
+  function obterUsernameTikTokDoResultado(
+    resultado: Resultado
+  ) {
+    const valor =
+      resultado.dados_completos
+        ? encontrarColuna(
+            resultado.dados_completos,
+            [
+              "username_tiktok",
+              "username tiktok",
+              "tiktok_username",
+              "tiktok username",
+              "usuario_tiktok",
+              "usuário tiktok",
+              "username",
+              "tiktok",
+            ]
+          )
+        : null;
+
+    const username =
+      valor?.toString().trim().replace(/^@/, "") ||
+      "";
+
+    return username;
+  }
+
+  function obterStreamerDoResultado(
+    resultado: Resultado
+  ) {
+    const username =
+      obterUsernameTikTokDoResultado(resultado);
+
+    if (username) {
+      const streamerPorUsername =
+        streamers.find(
+          (streamer) =>
+            streamer.username_tiktok
+              ?.trim()
+              .replace(/^@/, "")
+              .toLowerCase() ===
+            username.toLowerCase()
+        );
+
+      if (streamerPorUsername) {
+        return streamerPorUsername;
+      }
+    }
+
+    return obterStreamer(resultado.streamer_id);
+  }
+
   function nomeStreamer(
     streamerId: string
   ) {
@@ -693,6 +745,35 @@ export default function AdminPage() {
     return streamer
       ? `@${streamer.username_tiktok}`
       : "Streamer";
+  }
+
+  function nomeStreamerResultado(
+    resultado: Resultado
+  ) {
+    const streamer =
+      obterStreamerDoResultado(resultado);
+
+    if (streamer) {
+      return `@${streamer.username_tiktok}`;
+    }
+
+    const username =
+      obterUsernameTikTokDoResultado(resultado);
+
+    return username
+      ? `@${username}`
+      : "Streamer";
+  }
+
+  function grupoDoResultado(
+    resultado: Resultado
+  ) {
+    const streamer =
+      obterStreamerDoResultado(resultado);
+
+    return streamer
+      ? obterGrupoDoStreamer(streamer.id)
+      : obterGrupoDoStreamer(resultado.streamer_id);
   }
 
   /*
@@ -860,10 +941,44 @@ export default function AdminPage() {
           continue;
         }
 
+        const usernameArquivo =
+          encontrarColuna(
+            row,
+            [
+              "username_tiktok",
+              "username tiktok",
+              "tiktok_username",
+              "tiktok username",
+              "usuario_tiktok",
+              "usuário tiktok",
+              "username",
+              "tiktok",
+            ]
+          )?.toString()
+            .trim()
+            .replace(/^@/, "") ||
+          "";
+
+        const streamerDoArquivo =
+          usernameArquivo
+            ? streamers.find(
+                (streamer) =>
+                  streamer.username_tiktok
+                    ?.trim()
+                    .replace(/^@/, "")
+                    .toLowerCase() ===
+                  usernameArquivo.toLowerCase()
+              )
+            : null;
+
+        const streamerIdResultado =
+          streamerDoArquivo?.id ||
+          streamerSelecionado;
+
         const resultado:
           ImportResultado = {
           streamer_id:
-            streamerSelecionado,
+            streamerIdResultado,
 
           criador_id:
             criadorId,
@@ -1182,8 +1297,8 @@ export default function AdminPage() {
             .includes(
               termo
             ) ||
-          nomeStreamer(
-            resultado.streamer_id
+          nomeStreamerResultado(
+            resultado
           )
             .toLowerCase()
             .includes(
@@ -3014,7 +3129,7 @@ export default function AdminPage() {
 
         </div>
 
-        {/* CRIADORES */}
+        {/* STREAMERS */}
 
         <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0b1224]">
 
@@ -3027,19 +3142,23 @@ export default function AdminPage() {
                 <div className="flex items-center gap-3">
 
                   <h3 className="text-xl font-bold">
-                    👥 Criadores
+                    🎥 Streamers
                   </h3>
 
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
                     {
-                      resultadosFiltrados.length
+                      new Set(
+                        resultadosFiltrados.map(
+                          (resultado) => resultado.streamer_id
+                        )
+                      ).size
                     }
                   </span>
 
                 </div>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  Clique em um criador para visualizar os dados disponíveis.
+                  Cada linha representa os dados importados de um streamer.
                 </p>
 
               </div>
@@ -3057,7 +3176,7 @@ export default function AdminPage() {
                       .value
                   )
                 }
-                placeholder="Pesquisar criador ou streamer..."
+                placeholder="Pesquisar streamer..."
                 className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500 lg:w-80"
               />
 
@@ -3102,15 +3221,11 @@ export default function AdminPage() {
 
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[1050px]">
+              <table className="w-full min-w-[900px]">
 
                 <thead>
 
                   <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
-
-                    <th className="px-6 py-4">
-                      Criador
-                    </th>
 
                     <th className="px-6 py-4">
                       Streamer
@@ -3152,8 +3267,8 @@ export default function AdminPage() {
                     ) => {
 
                       const grupo =
-                        obterGrupoDoStreamer(
-                          resultado.streamer_id
+                        grupoDoResultado(
+                          resultado
                         );
 
                       return (
@@ -3164,30 +3279,16 @@ export default function AdminPage() {
 
                           <td className="px-6 py-5">
 
-                            <p className="font-semibold text-white">
+                            <p className="text-sm font-semibold text-white">
                               {
-                                resultado.nome_criador ||
-                                "Criador sem nome"
+                                nomeStreamerResultado(
+                                  resultado
+                                )
                               }
                             </p>
 
                             <p className="mt-1 text-xs text-slate-500">
-                              ID:{" "}
-                              {
-                                resultado.criador_id
-                              }
-                            </p>
-
-                          </td>
-
-                          <td className="px-6 py-5">
-
-                            <p className="text-sm font-semibold text-slate-300">
-                              {
-                                nomeStreamer(
-                                  resultado.streamer_id
-                                )
-                              }
+                              ID: {resultado.streamer_id}
                             </p>
 
                           </td>
@@ -3206,7 +3307,7 @@ export default function AdminPage() {
                             ) : (
 
                               <span className="text-sm text-slate-500">
-                                —
+                                Sem grupo
                               </span>
 
                             )}
