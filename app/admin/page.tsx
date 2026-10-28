@@ -297,7 +297,19 @@ export default function AdminPage() {
         inicio += tamanhoPagina;
       }
 
-      setResultados(todosResultados);
+      // Ignora apenas o registro legado cujo criador_id é uma mensagem de status,
+      // não um ID real. Não removemos nem alteramos dados no Supabase.
+      setResultados(
+        todosResultados.filter((resultado) => {
+          const idNormalizado = String(resultado.criador_id ?? "")
+            .trim()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase();
+
+          return idNormalizado !== "o criador deixou a agencia";
+        })
+      );
     } finally {
       setLoadingResultados(false);
     }
@@ -561,9 +573,35 @@ export default function AdminPage() {
         ]
       );
 
-    return String(
-      valor ?? ""
-    ).trim();
+    const idOriginal = String(valor ?? "").trim();
+
+    // Alguns registros de quem saiu da agência trazem uma mensagem no lugar
+    // do ID. Essa mensagem não pode servir de chave, pois faria vários criadores
+    // sobrescreverem os dados uns dos outros durante a importação.
+    if (/^\d{10,}$/.test(idOriginal)) {
+      return idOriginal;
+    }
+
+    const nome = obterNomeCriador(row);
+
+    // Usamos um identificador numérico negativo sintético para continuar
+    // compatível tanto com uma coluna TEXT quanto com uma BIGINT no Supabase.
+    // IDs reais do TikTok são positivos, então não há colisão com IDs reais.
+    const identidade = nome
+      ? `nome:${normalizarUsername(nome)}`
+      : Object.keys(row)
+          .sort((a, b) => a.localeCompare(b))
+          .map((chave) => `${chave}:${String(row[chave] ?? "").trim()}`)
+          .join("|");
+
+    let hash = 2166136261;
+    for (let i = 0; i < identidade.length; i++) {
+      hash ^= identidade.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    // O +1 evita gerar -0 caso o hash seja zero.
+    return `-${(hash >>> 0) + 1}`;
   }
 
   function obterNomeCriador(
@@ -870,7 +908,12 @@ export default function AdminPage() {
     const username = obterUsernameDoRegistroCriador(resultado);
     if (username) return `@${username}`;
 
-    return `Criador ${resultado.criador_id || "sem ID"}`;
+    const idCriador = String(resultado.criador_id || "");
+    if (idCriador.startsWith("-")) {
+      return `Criador sem nome #${idCriador.slice(1, 7)}`;
+    }
+
+    return `Criador ${idCriador || "sem ID"}`;
   }
 
   /*
@@ -1382,22 +1425,55 @@ export default function AdminPage() {
         const dados =
           resultados.filter(
             (resultado) => {
+              /*
+               * O relatório exportado do TikTok traz a coluna
+               * "Período dos dados" (ex.: 2026-09-01 ~ 2026-09-30).
+               * Usamos o início desse período para posicionar os
+               * resultados no mês correto do gráfico. A data_importacao
+               * é apenas uma alternativa para registros antigos que não
+               * guardaram o período original.
+               */
+              const dadosOriginais =
+                resultado.dados_completos || {};
+
+              const campoPeriodo =
+                Object.entries(dadosOriginais).find(
+                  ([chave]) => {
+                    const chaveNormalizada =
+                      chave
+                        .toLocaleLowerCase("pt-BR")
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "");
+
+                    return (
+                      chaveNormalizada.includes("periodo") &&
+                      chaveNormalizada.includes("dados")
+                    );
+                  }
+                );
+
+              const datasDoPeriodo =
+                String(campoPeriodo?.[1] ?? "").match(
+                  /\b\d{4}-\d{2}-\d{2}\b/g
+                );
+
+              const dataReferencia =
+                datasDoPeriodo?.length
+                  ? new Date(`${datasDoPeriodo[0]}T12:00:00`)
+                  : resultado.data_importacao
+                    ? new Date(resultado.data_importacao)
+                    : null;
+
               if (
-                !resultado.data_importacao
+                !dataReferencia ||
+                Number.isNaN(dataReferencia.getTime())
               ) {
                 return false;
               }
 
-              const dataResultado =
-                new Date(
-                  resultado.data_importacao
-                );
-
               return (
-                dataResultado.getFullYear() ===
-                  ano &&
-                dataResultado.getMonth() ===
-                  mes
+                dataReferencia.getFullYear() === ano &&
+                dataReferencia.getMonth() === mes
               );
             }
           );
