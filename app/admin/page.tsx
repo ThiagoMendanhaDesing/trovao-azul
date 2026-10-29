@@ -76,6 +76,30 @@ type MonthlyData = {
   transmissoes: number;
 };
 
+/** Snapshot consolidado do relatório no fim do período declarado pelo TikTok. */
+type DailySnapshot = {
+  snapshot_date: string;
+  creator_key: string;
+  streamer_id: string;
+  criador_id: string;
+  nome_criador?: string | null;
+  username_tiktok?: string | null;
+  diamantes: number | null;
+  novos_seguidores: number | null;
+  batalhas: number | null;
+  transmissoes: number | null;
+  duracao_live: number | null;
+};
+
+type DailyTotals = {
+  date: string;
+  diamantes: number;
+  seguidores: number;
+  batalhas: number;
+  transmissoes: number;
+  criadores: number;
+};
+
 const ADMIN_GROUP_PASSWORD = "0102";
 
 export default function AdminPage() {
@@ -84,6 +108,8 @@ export default function AdminPage() {
   const [streamers, setStreamers] = useState<Streamer[]>([]);
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [grupos, setGrupos] = useState<StreamerGroup[]>([]);
+  const [historicoDiario, setHistoricoDiario] = useState<DailySnapshot[]>([]);
+  const [erroHistoricoDiario, setErroHistoricoDiario] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [loadingResultados, setLoadingResultados] = useState(false);
@@ -228,6 +254,8 @@ export default function AdminPage() {
         carregarGestaoCriadores(),
       ]);
 
+      await carregarHistoricoDiario();
+
       if (resultadosCarregados) {
         await inicializarGestaoDosCriadores(
           resultadosCarregados,
@@ -361,6 +389,85 @@ export default function AdminPage() {
       return resultadosFiltrados;
     } finally {
       setLoadingResultados(false);
+    }
+  }
+
+  /** Carrega os snapshots históricos paginados do banco. */
+  async function carregarHistoricoDiario() {
+    try {
+      setErroHistoricoDiario("");
+      const todos: DailySnapshot[] = [];
+      const tamanhoPagina = 1000;
+      let inicio = 0;
+
+      while (true) {
+        const { data, error } = await supabase
+          .from("resultados_streamers_historico_diario")
+          .select("snapshot_date, creator_key, streamer_id, criador_id, nome_criador, username_tiktok, diamantes, novos_seguidores, batalhas, transmissoes, duracao_live")
+          .order("snapshot_date", { ascending: true })
+          .order("creator_key", { ascending: true })
+          .range(inicio, inicio + tamanhoPagina - 1);
+
+        if (error) {
+          console.error("Erro ao carregar histórico diário:", error);
+          setHistoricoDiario([]);
+          setErroHistoricoDiario("Para ativar o histórico por dia, execute primeiro o SQL de configuração do histórico diário.");
+          return;
+        }
+
+        const pagina = (data || []) as DailySnapshot[];
+        todos.push(...pagina);
+        if (pagina.length < tamanhoPagina) break;
+        inicio += tamanhoPagina;
+      }
+
+      setHistoricoDiario(todos);
+    } catch (error) {
+      console.error("Erro inesperado ao carregar histórico diário:", error);
+      setHistoricoDiario([]);
+      setErroHistoricoDiario("Não foi possível carregar o histórico diário.");
+    }
+  }
+
+  /**
+   * Guarda uma fotografia do relatório pelo fim do período nele declarado.
+   * Reimportar o mesmo período atualiza a mesma fotografia, sem duplicá-la.
+   */
+  async function salvarHistoricoDoRelatorio(importados: ImportResultado[]) {
+    if (!importados.length) return;
+
+    const primeiro = importados[0] as Resultado;
+    const periodoRelatorio = obterPeriodoRelatorio(primeiro);
+    const dataReferencia = periodoRelatorio?.fim || new Date();
+    const snapshotDate = [
+      dataReferencia.getFullYear(),
+      String(dataReferencia.getMonth() + 1).padStart(2, "0"),
+      String(dataReferencia.getDate()).padStart(2, "0"),
+    ].join("-");
+
+    const snapshots: DailySnapshot[] = importados.map((item) => {
+      const resultado = item as Resultado;
+      return {
+        snapshot_date: snapshotDate,
+        creator_key: chaveCriador(resultado),
+        streamer_id: String(resultado.streamer_id),
+        criador_id: String(resultado.criador_id),
+        nome_criador: resultado.nome_criador || obterNomeExibicaoCriador(resultado),
+        username_tiktok: obterUsernameDoRegistroCriador(resultado) || null,
+        diamantes: Number(resultado.diamantes) || 0,
+        novos_seguidores: Number(resultado.novos_seguidores) || 0,
+        batalhas: Number(resultado.batalhas) || 0,
+        transmissoes: Number(resultado.transmissoes) || 0,
+        duracao_live: Number(resultado.duracao_live) || 0,
+      };
+    });
+
+    const { error } = await supabase
+      .from("resultados_streamers_historico_diario")
+      .upsert(snapshots, { onConflict: "snapshot_date,creator_key" });
+
+    if (error) {
+      throw new Error(`Relatório importado, mas não foi possível salvar o histórico diário: ${error.message}. Execute o SQL de configuração do histórico.`);
     }
   }
 
@@ -1567,6 +1674,10 @@ export default function AdminPage() {
         );
       }
 
+      // Mantém um histórico das importações, usando a data final do período
+      // do relatório (e não o dia em que o arquivo foi enviado).
+      await salvarHistoricoDoRelatorio(resultadosUnicos);
+      await carregarHistoricoDiario();
       await atualizarGestaoAposImportacao(resultadosUnicos, resultados);
       await carregarResultados();
       const gestaoAtualizada = await carregarGestaoCriadores();
@@ -1649,187 +1760,93 @@ export default function AdminPage() {
 
   /*
    * ============================================================
-   * DADOS MENSAIS
+   * HISTÓRICO DIÁRIO E INDICADORES DO MÊS ATUAL
    * ============================================================
+   * Cada importação é registrada na data final do período declarado no
+   * relatório. Dias sem relatório não são preenchidos com números inventados.
    */
 
-  const dadosMensais =
-    useMemo(() => {
-      if (!agora) {
-        return [];
-      }
+  const totaisPorDia = useMemo<DailyTotals[]>(() => {
+    const porData = new Map<string, DailyTotals>();
 
-      const quantidade =
-        Number(periodo);
+    for (const row of historicoDiario) {
+      const data = String(row.snapshot_date).slice(0, 10);
+      if (!data) continue;
+      const atual = porData.get(data) || {
+        date: data,
+        diamantes: 0,
+        seguidores: 0,
+        batalhas: 0,
+        transmissoes: 0,
+        criadores: 0,
+      };
+      atual.diamantes += Number(row.diamantes) || 0;
+      atual.seguidores += Number(row.novos_seguidores) || 0;
+      atual.batalhas += Number(row.batalhas) || 0;
+      atual.transmissoes += Number(row.transmissoes) || 0;
+      atual.criadores += 1;
+      porData.set(data, atual);
+    }
 
-      const meses:
-        MonthlyData[] = [];
+    return Array.from(porData.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [historicoDiario]);
 
-      for (
-        let i =
-          quantidade - 1;
-        i >= 0;
-        i--
-      ) {
-        const data =
-          new Date(
-            agora.getFullYear(),
-            agora.getMonth() - i,
-            1
-          );
+  const mapaTotaisPorDia = useMemo(
+    () => new Map(totaisPorDia.map((item) => [item.date, item])),
+    [totaisPorDia]
+  );
 
-        const ano =
-          data.getFullYear();
+  const resumoMesAtual = useMemo<DailyTotals | null>(() => {
+    if (!agora) return null;
+    const prefixo = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`;
+    return totaisPorDia
+      .filter((item) => item.date.startsWith(`${prefixo}-`) && Number(item.date.slice(8, 10)) <= agora.getDate())
+      .at(-1) || null;
+  }, [agora, totaisPorDia]);
 
-        const mes =
-          data.getMonth();
+  const diasDoMesAtual = useMemo(() => {
+    if (!agora) return [];
+    const dias = [];
+    for (let dia = 1; dia <= agora.getDate(); dia++) {
+      const data = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+      dias.push({ dia, data, resumo: mapaTotaisPorDia.get(data) || null });
+    }
+    return dias;
+  }, [agora, mapaTotaisPorDia]);
 
-        const dados =
-          resultados.filter(
-            (resultado) => {
-              /*
-               * O relatório exportado do TikTok traz a coluna
-               * "Período dos dados" (ex.: 2026-09-01 ~ 2026-09-30).
-               * Usamos o início desse período para posicionar os
-               * resultados no mês correto do gráfico. A data_importacao
-               * é apenas uma alternativa para registros antigos que não
-               * guardaram o período original.
-               */
-              const dadosOriginais =
-                resultado.dados_completos || {};
+  const maxDiamantesDiarios = Math.max(
+    ...diasDoMesAtual.map((item) => item.resumo?.diamantes || 0),
+    1
+  );
 
-              const campoPeriodo =
-                Object.entries(dadosOriginais).find(
-                  ([chave]) => {
-                    const chaveNormalizada =
-                      chave
-                        .toLocaleLowerCase("pt-BR")
-                        .normalize("NFD")
-                        .replace(/[\u0300-\u036f]/g, "");
+  const ultimoSnapshotDisponivel = totaisPorDia[totaisPorDia.length - 1] || null;
 
-                    return (
-                      chaveNormalizada.includes("periodo") &&
-                      chaveNormalizada.includes("dados")
-                    );
-                  }
-                );
+  const dadosMensais = useMemo(() => {
+    if (!agora) return [];
+    const quantidade = Number(periodo);
+    const meses: MonthlyData[] = [];
 
-              const datasDoPeriodo =
-                String(campoPeriodo?.[1] ?? "").match(
-                  /\b\d{4}-\d{2}-\d{2}\b/g
-                );
+    for (let i = quantidade - 1; i >= 0; i--) {
+      const data = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
+      const prefixo = `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}-`;
+      const snapshotsDoMes = totaisPorDia.filter((item) => item.date.startsWith(prefixo));
+      const ultimoDoMes = snapshotsDoMes[snapshotsDoMes.length - 1] || null;
 
-              const dataReferencia =
-                datasDoPeriodo?.length
-                  ? new Date(`${datasDoPeriodo[0]}T12:00:00`)
-                  : resultado.data_importacao
-                    ? new Date(resultado.data_importacao)
-                    : null;
+      meses.push({
+        label: data.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "").toUpperCase(),
+        fullLabel: data.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }),
+        diamantes: ultimoDoMes?.diamantes || 0,
+        seguidores: ultimoDoMes?.seguidores || 0,
+        batalhas: ultimoDoMes?.batalhas || 0,
+        transmissoes: ultimoDoMes?.transmissoes || 0,
+      });
+    }
 
-              if (
-                !dataReferencia ||
-                Number.isNaN(dataReferencia.getTime())
-              ) {
-                return false;
-              }
+    return meses;
+  }, [agora, totaisPorDia, periodo]);
 
-              return (
-                dataReferencia.getFullYear() === ano &&
-                dataReferencia.getMonth() === mes
-              );
-            }
-          );
-
-        const diamantes =
-          dados.reduce(
-            (total, item) =>
-              total +
-              (Number(
-                item.diamantes
-              ) || 0),
-            0
-          );
-
-        const seguidores =
-          dados.reduce(
-            (total, item) =>
-              total +
-              (Number(
-                item.novos_seguidores
-              ) || 0),
-            0
-          );
-
-        const batalhas =
-          dados.reduce(
-            (total, item) =>
-              total +
-              (Number(
-                item.batalhas
-              ) || 0),
-            0
-          );
-
-        const transmissoes =
-          dados.reduce(
-            (total, item) =>
-              total +
-              (Number(
-                item.transmissoes
-              ) || 0),
-            0
-          );
-
-        meses.push({
-          label:
-            data
-              .toLocaleDateString(
-                "pt-BR",
-                {
-                  month:
-                    "short",
-                }
-              )
-              .replace(
-                ".",
-                ""
-              )
-              .toUpperCase(),
-
-          fullLabel:
-            data.toLocaleDateString(
-              "pt-BR",
-              {
-                month:
-                  "long",
-                year:
-                  "numeric",
-              }
-            ),
-
-          diamantes,
-          seguidores,
-          batalhas,
-          transmissoes,
-        });
-      }
-
-      return meses;
-    }, [
-      agora,
-      resultados,
-      periodo,
-    ]);
-
-  const mesAtual =
-    dadosMensais[
-      dadosMensais.length - 1
-    ];
-
-  const mesAnterior =
-    dadosMensais[
-      dadosMensais.length - 2
-    ];
+  const mesAtual = dadosMensais[dadosMensais.length - 1];
+  const mesAnterior = dadosMensais[dadosMensais.length - 2];
 
   function calcularVariacao(
     atual: number,
@@ -2640,55 +2657,104 @@ export default function AdminPage() {
 
         </div>
 
-        {/* CARDS PRINCIPAIS */}
-
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-
-          <MetricCard
-            icon="👥"
-            title="Criadores"
-            value={formatarNumero(
-              criadoresVisiveis.length
-            )}
-            subtitle="Total importado"
-            accent="blue"
-          />
-
-          <MetricCard
-            icon="💎"
-            title="Diamantes"
-            value={formatarNumero(
-              totalDiamantes
-            )}
-            subtitle="Total registrado"
-            accent="purple"
-          />
-
-          <MetricCard
-            icon="👤"
-            title="Novos seguidores"
-            value={formatarNumero(
-              totalSeguidores
-            )}
-            subtitle="Total registrado"
-            accent="green"
-          />
-
-          <MetricCard
-            icon="⚔️"
-            title="Batalhas"
-            value={formatarNumero(
-              totalBatalhas
-            )}
-            subtitle={`${formatarNumero(
-              totalTransmissoes
-            )} transmissões`}
-            accent="orange"
-          />
-
+        {/* TOTAIS GERAIS — compactos, apenas como visão geral da agência */}
+        <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {[
+            { icon: "👥", label: "Criadores ativos", value: formatarNumero(criadoresVisiveis.length), hint: "Total importado" },
+            { icon: "💎", label: "Diamantes totais", value: formatarNumero(totalDiamantes), hint: "Todos os períodos" },
+            { icon: "👤", label: "Seguidores totais", value: formatarNumero(totalSeguidores), hint: "Todos os períodos" },
+            { icon: "⚔️", label: "Batalhas totais", value: formatarNumero(totalBatalhas), hint: `${formatarNumero(totalTransmissoes)} transmissões` },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0b1224]/75 px-4 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-800/80 text-lg">{item.icon}</span>
+              <div className="min-w-0">
+                <p className="text-[11px] text-slate-500">{item.label}</p>
+                <p className="truncate text-lg font-bold text-slate-100">{item.value}</p>
+                <p className="text-[10px] text-slate-600">{item.hint}</p>
+              </div>
+            </div>
+          ))}
         </div>
 
-        {/* COMPARAÇÃO */}
+        {/* DESEMPENHO DO MÊS ATUAL — destaque principal */}
+        <div className="mb-8 rounded-3xl border border-blue-500/20 bg-gradient-to-br from-blue-500/[0.07] via-[#0b1224] to-purple-500/[0.06] p-5 sm:p-7">
+          <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-400">Acompanhamento mensal</p>
+              <h3 className="mt-1 text-2xl font-bold sm:text-3xl">
+                Desempenho de {agora?.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }) || "este mês"}
+              </h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Do dia 01 até {agora?.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) || "hoje"}. Valores da última importação disponível deste mês.
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-4 py-3">
+              <p className="text-xs text-slate-500">Último relatório deste mês</p>
+              <p className="mt-1 text-sm font-bold text-slate-200">
+                {resumoMesAtual ? new Date(`${resumoMesAtual.date}T12:00:00`).toLocaleDateString("pt-BR") : "Ainda não importado"}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { icon: "💎", label: "Diamantes no mês", value: resumoMesAtual?.diamantes || 0, color: "text-purple-300", border: "border-purple-500/25" },
+              { icon: "👤", label: "Novos seguidores", value: resumoMesAtual?.seguidores || 0, color: "text-emerald-300", border: "border-emerald-500/25" },
+              { icon: "⚔️", label: "Batalhas", value: resumoMesAtual?.batalhas || 0, color: "text-blue-300", border: "border-blue-500/25" },
+              { icon: "📡", label: "Transmissões", value: resumoMesAtual?.transmissoes || 0, color: "text-amber-300", border: "border-amber-500/25" },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-2xl border ${item.border} bg-slate-950/60 p-5`}>
+                <p className="text-sm text-slate-400">{item.icon} {item.label}</p>
+                <p className={`mt-3 break-words text-3xl font-extrabold tracking-tight sm:text-4xl ${item.color}`}>
+                  {formatarNumero(item.value)}
+                </p>
+                <p className="mt-2 text-xs text-slate-600">Acumulado no período importado</p>
+              </div>
+            ))}
+          </div>
+
+          {!resumoMesAtual && (
+            <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm leading-6 text-amber-100/80">
+              Ainda não existe um relatório do mês atual. O último relatório disponível é {ultimoSnapshotDisponivel ? new Date(`${ultimoSnapshotDisponivel.date}T12:00:00`).toLocaleDateString("pt-BR") : "nenhum"}. Importe um relatório com o período de {agora?.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) ? `01/${String((agora?.getMonth() || 0) + 1).padStart(2, "0")}` : "01"} até a data desejada para iniciar o acompanhamento deste mês. Os valores dos dias sem relatório não são estimados.
+            </div>
+          )}
+          {erroHistoricoDiario && (
+            <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm leading-6 text-amber-100/80">
+              {erroHistoricoDiario} Baixe e execute o SQL de histórico diário que acompanha este arquivo.
+            </div>
+          )}
+
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 sm:p-5">
+            <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div>
+                <h4 className="text-lg font-bold">Diamantes por dia do mês</h4>
+                <p className="mt-1 text-xs text-slate-500">Cada barra representa o total acumulado informado no relatório daquele dia.</p>
+              </div>
+              <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-bold text-purple-300">💎 {agora ? `01–${String(agora.getDate()).padStart(2, "0")}` : "Este mês"}</span>
+            </div>
+
+            <div className="flex items-end gap-1 overflow-x-auto pb-3" style={{ minHeight: 250 }}>
+              {diasDoMesAtual.map((item) => {
+                const diamantes = item.resumo?.diamantes || 0;
+                const altura = item.resumo ? Math.max((diamantes / maxDiamantesDiarios) * 100, 4) : 1.5;
+                return (
+                  <div key={item.data} className="flex min-w-[26px] flex-1 flex-col items-center justify-end gap-2" title={item.resumo ? `${item.dia}/${String(agora?.getMonth()! + 1).padStart(2, "0")}: ${formatarNumero(diamantes)} diamantes` : `${item.dia}: nenhum relatório salvo para esta data`}>
+                    <span className={`text-[9px] ${item.resumo ? "text-slate-300" : "text-slate-700"}`}>{item.resumo ? formatarNumero(diamantes) : "—"}</span>
+                    <div className="flex h-40 w-full items-end justify-center">
+                      <div className={`w-full max-w-[22px] rounded-t-md transition-all ${item.resumo ? "bg-gradient-to-t from-blue-700 to-purple-400" : "border-t border-dashed border-slate-700 bg-slate-800/25"}`} style={{ height: `${altura}%` }} />
+                    </div>
+                    <span className={`text-[10px] font-semibold ${item.resumo ? "text-slate-400" : "text-slate-700"}`}>{item.dia}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              Para acompanhar a evolução dia a dia, importe o relatório atualizado com frequência. O sistema posiciona cada registro pela data final em “Período dos dados”; dias sem uma importação correspondente aparecem com traço, não como zero real.
+            </p>
+          </div>
+        </div>
+
+        {/* HISTÓRICO MENSAL */}
 
         <div className="mb-8 rounded-3xl border border-slate-800 bg-[#0b1224] p-6">
 
@@ -2697,16 +2763,15 @@ export default function AdminPage() {
             <div>
 
               <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-                Performance
+                Histórico
               </p>
 
               <h3 className="mt-1 text-2xl font-bold">
-                Comparação com o mês anterior
+                Comparação entre meses
               </h3>
 
               <p className="mt-1 text-sm text-slate-500">
-                Acompanhe a evolução dos
-                principais indicadores.
+                Use esta visão para comparar os últimos meses com dados importados.
               </p>
 
             </div>
