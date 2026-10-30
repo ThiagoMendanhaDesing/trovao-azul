@@ -1718,46 +1718,6 @@ export default function AdminPage() {
 
   const resultadosNaoArquivados = resultados.filter((item) => !criadorEstaArquivado(item));
 
-  const totalDiamantes =
-    resultadosNaoArquivados.reduce(
-      (total, item) =>
-        total +
-        (Number(
-          item.diamantes
-        ) || 0),
-      0
-    );
-
-  const totalSeguidores =
-    resultadosNaoArquivados.reduce(
-      (total, item) =>
-        total +
-        (Number(
-          item.novos_seguidores
-        ) || 0),
-      0
-    );
-
-  const totalBatalhas =
-    resultadosNaoArquivados.reduce(
-      (total, item) =>
-        total +
-        (Number(
-          item.batalhas
-        ) || 0),
-      0
-    );
-
-  const totalTransmissoes =
-    resultadosNaoArquivados.reduce(
-      (total, item) =>
-        total +
-        (Number(
-          item.transmissoes
-        ) || 0),
-      0
-    );
-
   /*
    * ============================================================
    * HISTÓRICO DIÁRIO E INDICADORES DO MÊS ATUAL
@@ -1844,6 +1804,49 @@ export default function AdminPage() {
 
     return meses;
   }, [agora, totaisPorDia, periodo]);
+
+  /**
+   * Totais gerais: somamos o último snapshot disponível de cada mês.
+   * A tabela resultados_streamers guarda apenas o estado mais recente de cada
+   * criador (o relatório de outubro substitui setembro para os mesmos IDs).
+   * O histórico mensal, por sua vez, preserva os snapshots dos dois períodos.
+   * Usar o último snapshot por mês evita somar várias importações do mesmo mês.
+   */
+  const totaisGeraisHistoricos = useMemo(() => {
+    const ultimoSnapshotPorMes = new Map<string, DailyTotals>();
+
+    for (const item of totaisPorDia) {
+      const mes = item.date.slice(0, 7);
+      const existente = ultimoSnapshotPorMes.get(mes);
+      if (!existente || item.date > existente.date) {
+        ultimoSnapshotPorMes.set(mes, item);
+      }
+    }
+
+    const meses = Array.from(ultimoSnapshotPorMes.values());
+    return {
+      mesesComDados: meses.length,
+      diamantes: meses.reduce((soma, item) => soma + item.diamantes, 0),
+      seguidores: meses.reduce((soma, item) => soma + item.seguidores, 0),
+      batalhas: meses.reduce((soma, item) => soma + item.batalhas, 0),
+      transmissoes: meses.reduce((soma, item) => soma + item.transmissoes, 0),
+    };
+  }, [totaisPorDia]);
+
+  // Fallback para projetos onde o histórico ainda não foi configurado.
+  const totaisAtuais = {
+    diamantes: resultadosNaoArquivados.reduce((soma, item) => soma + (Number(item.diamantes) || 0), 0),
+    seguidores: resultadosNaoArquivados.reduce((soma, item) => soma + (Number(item.novos_seguidores) || 0), 0),
+    batalhas: resultadosNaoArquivados.reduce((soma, item) => soma + (Number(item.batalhas) || 0), 0),
+    transmissoes: resultadosNaoArquivados.reduce((soma, item) => soma + (Number(item.transmissoes) || 0), 0),
+  };
+
+  // Quando existem snapshots, os cards “totais” acumulam um snapshot por mês.
+  const historicoPronto = totaisGeraisHistoricos.mesesComDados > 0;
+  const totalDiamantes = historicoPronto ? totaisGeraisHistoricos.diamantes : totaisAtuais.diamantes;
+  const totalSeguidores = historicoPronto ? totaisGeraisHistoricos.seguidores : totaisAtuais.seguidores;
+  const totalBatalhas = historicoPronto ? totaisGeraisHistoricos.batalhas : totaisAtuais.batalhas;
+  const totalTransmissoes = historicoPronto ? totaisGeraisHistoricos.transmissoes : totaisAtuais.transmissoes;
 
   const mesAtual = dadosMensais[dadosMensais.length - 1];
   const mesAnterior = dadosMensais[dadosMensais.length - 2];
@@ -2661,9 +2664,9 @@ export default function AdminPage() {
         <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
           {[
             { icon: "👥", label: "Criadores ativos", value: formatarNumero(criadoresVisiveis.length), hint: "Total importado" },
-            { icon: "💎", label: "Diamantes totais", value: formatarNumero(totalDiamantes), hint: "Todos os períodos" },
-            { icon: "👤", label: "Seguidores totais", value: formatarNumero(totalSeguidores), hint: "Todos os períodos" },
-            { icon: "⚔️", label: "Batalhas totais", value: formatarNumero(totalBatalhas), hint: `${formatarNumero(totalTransmissoes)} transmissões` },
+            { icon: "💎", label: "Diamantes totais", value: formatarNumero(totalDiamantes), hint: historicoPronto ? `${totaisGeraisHistoricos.mesesComDados} meses somados` : "Relatório atual" },
+            { icon: "👤", label: "Seguidores totais", value: formatarNumero(totalSeguidores), hint: historicoPronto ? `${totaisGeraisHistoricos.mesesComDados} meses somados` : "Relatório atual" },
+            { icon: "⚔️", label: "Batalhas totais", value: formatarNumero(totalBatalhas), hint: `${formatarNumero(totalTransmissoes)} transmissões${historicoPronto ? ` · ${totaisGeraisHistoricos.mesesComDados} meses` : ""}` },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0b1224]/75 px-4 py-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-800/80 text-lg">{item.icon}</span>
